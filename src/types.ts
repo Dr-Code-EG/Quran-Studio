@@ -20,6 +20,14 @@ export interface Reciter {
   };
 }
 
+export interface BackgroundConfig {
+  id: string;
+  fileUrl?: string;
+  verseFrom: number;
+  verseTo: number;
+  type: 'image' | 'video';
+}
+
 export interface VideoConfig {
   surahId: number;
   verseFrom: number;
@@ -28,6 +36,7 @@ export interface VideoConfig {
   aspectRatio: '9:16' | '16:9' | '1:1';
   theme: string;
   fontFamily: string;
+  customFontUrl?: string;
   fontSize: number;
   fontColor: string;
   textPosition: 'top' | 'center' | 'bottom';
@@ -40,12 +49,17 @@ export interface VideoConfig {
   socialPlatform: string;
   blurBackground: number;
   brightnessBackground: number;
+  overlayType: 'none' | 'dust' | 'bokeh' | 'light_leaks';
+  overlayOpacity: number;
+  transitionType: 'fade' | 'slide' | 'zoom';
+  backgrounds: BackgroundConfig[];
 }
 
 export interface JobStatus {
   id: string;
   status: 'processing' | 'completed' | 'failed';
   progress: number;
+  stage: string;
   videoUrl?: string;
   error?: string;
 }

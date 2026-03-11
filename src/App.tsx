@@ -18,13 +18,18 @@ import {
   Youtube,
   Twitter,
   Facebook,
-  Monitor
+  Monitor,
+  Plus,
+  Trash2,
+  Layers,
+  Sun,
+  Droplets
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Surah, Reciter, VideoConfig, JobStatus } from './types';
+import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -43,6 +48,20 @@ const THEMES = [
   { id: 'minimal', label: 'Minimal', color: 'bg-zinc-500' },
   { id: 'nature', label: 'Nature', color: 'bg-green-500' },
   { id: 'night', label: 'Night', color: 'bg-indigo-500' },
+];
+
+const OVERLAYS = [
+  { id: 'none', label: 'None' },
+  { id: 'dust', label: 'Dust Particles' },
+  { id: 'bokeh', label: 'Bokeh Lights' },
+  { id: 'light_leaks', label: 'Light Leaks' },
+];
+
+const ARABIC_FONTS = [
+  { id: 'Amiri', label: 'Amiri (Traditional)' },
+  { id: 'Lateef', label: 'Lateef (Soft)' },
+  { id: 'Scheherazade', label: 'Scheherazade (Classic)' },
+  { id: 'Noto Sans Arabic', label: 'Noto Sans (Modern)' },
 ];
 
 export default function App() {
@@ -72,10 +91,29 @@ export default function App() {
     socialPlatform: 'instagram',
     blurBackground: 0,
     brightnessBackground: 100,
+    overlayType: 'none',
+    overlayOpacity: 0.5,
+    transitionType: 'fade',
+    backgrounds: [],
   });
 
-  const [bgFile, setBgFile] = useState<File | null>(null);
-  const [bgPreview, setBgPreview] = useState<string | null>(null);
+  const [customFontFile, setCustomFontFile] = useState<File | null>(null);
+  const [bgFiles, setBgFiles] = useState<Record<string, File>>({});
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [previewVerse, setPreviewVerse] = useState({ text: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', translation: 'In the name of Allah, the Entirely Merciful, the Especially Merciful.' });
+
+  useEffect(() => {
+    const fetchPreview = async () => {
+      try {
+        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
+        setPreviewVerse(res.data);
+      } catch (error) {
+        console.error("Failed to fetch preview verse", error);
+      }
+    };
+    const timer = setTimeout(fetchPreview, 500);
+    return () => clearTimeout(timer);
+  }, [config.surahId, config.verseFrom]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -114,13 +152,45 @@ export default function App() {
     return () => clearInterval(interval);
   }, [jobStatus]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const addBackground = () => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setConfig({
+      ...config,
+      backgrounds: [
+        ...config.backgrounds,
+        { id, verseFrom: config.verseFrom, verseTo: config.verseTo, type: 'image' }
+      ]
+    });
+  };
+
+  const removeBackground = (id: string) => {
+    setConfig({
+      ...config,
+      backgrounds: config.backgrounds.filter(bg => bg.id !== id)
+    });
+    const newBgFiles = { ...bgFiles };
+    delete newBgFiles[id];
+    setBgFiles(newBgFiles);
+    const newPreviews = { ...previews };
+    delete newPreviews[id];
+    setPreviews(newPreviews);
+  };
+
+  const handleBgFileChange = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setBgFile(file);
+      setBgFiles({ ...bgFiles, [id]: file });
       const reader = new FileReader();
-      reader.onloadend = () => setBgPreview(reader.result as string);
+      reader.onloadend = () => setPreviews({ ...previews, [id]: reader.result as string });
       reader.readAsDataURL(file);
+    }
+  };
+
+  const handleFontChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setCustomFontFile(file);
+      setConfig({ ...config, fontFamily: 'Custom' });
     }
   };
 
@@ -130,11 +200,19 @@ export default function App() {
     
     const formData = new FormData();
     formData.append('config', JSON.stringify(config));
-    if (bgFile) formData.append('background', bgFile);
+    
+    // Append backgrounds in order
+    config.backgrounds.forEach((bg, index) => {
+      if (bgFiles[bg.id]) {
+        formData.append('backgrounds', bgFiles[bg.id]);
+      }
+    });
+
+    if (customFontFile) formData.append('customFont', customFontFile);
 
     try {
       const res = await axios.post('/api/generate', formData);
-      setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0 });
+      setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
     } catch (error) {
       console.error("Generation failed", error);
       setGenerating(false);
@@ -153,6 +231,7 @@ export default function App() {
   }
 
   const currentSurah = surahs.find(s => s.id === config.surahId);
+  const firstBgPreview = config.backgrounds.length > 0 ? previews[config.backgrounds[0].id] : null;
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
@@ -165,7 +244,7 @@ export default function App() {
             </div>
             <h1 className="text-2xl font-bold tracking-tight">Quran Studio</h1>
           </div>
-          <p className="text-zinc-500 text-sm">Create professional Quranic videos in seconds.</p>
+          <p className="text-zinc-500 text-sm">Professional Quranic Video Creator</p>
         </header>
 
         <div className="space-y-8">
@@ -182,7 +261,16 @@ export default function App() {
                 <select 
                   className="w-full bg-zinc-900 border border-white/10 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
                   value={config.surahId}
-                  onChange={(e) => setConfig({ ...config, surahId: Number(e.target.value), verseFrom: 1, verseTo: surahs.find(s => s.id === Number(e.target.value))?.verses_count || 7 })}
+                  onChange={(e) => {
+                    const sId = Number(e.target.value);
+                    const s = surahs.find(surah => surah.id === sId);
+                    setConfig({ 
+                      ...config, 
+                      surahId: sId, 
+                      verseFrom: 1, 
+                      verseTo: s?.verses_count || 7 
+                    });
+                  }}
                 >
                   {surahs.map(s => (
                     <option key={s.id} value={s.id}>{s.id}. {s.name_simple} ({s.name_arabic})</option>
@@ -230,84 +318,129 @@ export default function App() {
             </div>
           </section>
 
-          {/* Section: Visuals */}
+          {/* Section: Multi-Background */}
           <section className="space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
-              <Layout className="w-3 h-3" />
-              <span>Visual Settings</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+                <Layers className="w-3 h-3" />
+                <span>Background Segments</span>
+              </div>
+              <button 
+                onClick={addBackground}
+                className="flex items-center gap-1 px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all"
+              >
+                <Plus className="w-3 h-3" />
+                Add Segment
+              </button>
             </div>
 
-            <div className="grid gap-6">
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-zinc-300">Aspect Ratio</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {ASPECT_RATIOS.map(ratio => (
-                    <button
-                      key={ratio.id}
-                      onClick={() => setConfig({ ...config, aspectRatio: ratio.id as any })}
-                      className={cn(
-                        "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all",
-                        config.aspectRatio === ratio.id 
-                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
-                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
-                      )}
-                    >
-                      {ratio.icon}
-                      <span className="text-[10px] font-bold uppercase tracking-tighter">{ratio.id}</span>
+            <div className="space-y-3">
+              {config.backgrounds.map((bg, index) => (
+                <div key={bg.id} className="p-4 rounded-2xl bg-zinc-900/50 border border-white/5 space-y-4 hover:border-white/10 transition-all group">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] font-bold text-emerald-500">
+                        {index + 1}
+                      </div>
+                      <span className="text-xs font-bold text-zinc-400 uppercase">Segment</span>
+                    </div>
+                    <button onClick={() => removeBackground(bg.id)} className="opacity-0 group-hover:opacity-100 text-red-500/50 hover:text-red-500 transition-all">
+                      <Trash2 className="w-4 h-4" />
                     </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-zinc-300">Background</label>
-                <div 
-                  onClick={() => document.getElementById('bg-upload')?.click()}
-                  className="group relative h-32 rounded-2xl border-2 border-dashed border-white/10 bg-zinc-900/50 hover:bg-zinc-900 hover:border-emerald-500/50 transition-all cursor-pointer overflow-hidden flex flex-col items-center justify-center gap-2"
-                >
-                  {bgPreview ? (
-                    <img src={bgPreview} className="absolute inset-0 w-full h-full object-cover opacity-40 group-hover:opacity-60 transition-opacity" />
-                  ) : (
-                    <Upload className="w-6 h-6 text-zinc-500 group-hover:text-emerald-500 transition-colors" />
-                  )}
-                  <span className="text-xs font-medium text-zinc-500 group-hover:text-zinc-300 relative z-10">
-                    {bgFile ? bgFile.name : 'Upload Image/Video'}
-                  </span>
-                  <input id="bg-upload" type="file" className="hidden" onChange={handleFileChange} accept="image/*,video/*" />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-zinc-300">Theme Preset</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {THEMES.map(theme => (
-                    <button
-                      key={theme.id}
-                      onClick={() => setConfig({ ...config, theme: theme.id })}
-                      className={cn(
-                        "flex items-center gap-2 p-2 rounded-xl border transition-all text-xs font-medium",
-                        config.theme === theme.id 
-                          ? "bg-white/10 border-white/20 text-white" 
-                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
-                      )}
+                  </div>
+                  
+                  <div className="grid grid-cols-[80px_1fr] gap-4">
+                    <div 
+                      onClick={() => document.getElementById(`bg-upload-${bg.id}`)?.click()}
+                      className="aspect-square rounded-xl border border-dashed border-white/10 hover:border-emerald-500/50 transition-all cursor-pointer overflow-hidden flex items-center justify-center relative bg-black/20"
                     >
-                      <div className={cn("w-2 h-2 rounded-full", theme.color)} />
-                      {theme.label}
-                    </button>
-                  ))}
+                      {previews[bg.id] ? (
+                        <img src={previews[bg.id]} className="absolute inset-0 w-full h-full object-cover" />
+                      ) : (
+                        <Upload className="w-4 h-4 text-zinc-600" />
+                      )}
+                      <input id={`bg-upload-${bg.id}`} type="file" className="hidden" accept="image/*,video/*" onChange={(e) => handleBgFileChange(bg.id, e)} />
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-zinc-500 uppercase font-bold">From</label>
+                          <input 
+                            type="number" 
+                            className="w-full bg-black/40 border border-white/5 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:ring-1 focus:ring-emerald-500 outline-none"
+                            value={bg.verseFrom}
+                            onChange={(e) => {
+                              const newBgs = [...config.backgrounds];
+                              newBgs[index].verseFrom = Number(e.target.value);
+                              setConfig({ ...config, backgrounds: newBgs });
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-zinc-500 uppercase font-bold">To</label>
+                          <input 
+                            type="number" 
+                            className="w-full bg-black/40 border border-white/5 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:ring-1 focus:ring-emerald-500 outline-none"
+                            value={bg.verseTo}
+                            onChange={(e) => {
+                              const newBgs = [...config.backgrounds];
+                              newBgs[index].verseTo = Number(e.target.value);
+                              setConfig({ ...config, backgrounds: newBgs });
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-zinc-600 italic">
+                        This background will be active from verse {bg.verseFrom} to {bg.verseTo}.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ))}
+              {config.backgrounds.length === 0 && (
+                <div className="text-center py-8 rounded-2xl border border-dashed border-white/5 bg-zinc-900/20">
+                  <p className="text-zinc-600 text-xs italic">No background segments added.</p>
+                  <button onClick={addBackground} className="mt-2 text-emerald-500 text-xs font-bold hover:underline">Add your first segment</button>
+                </div>
+              )}
             </div>
           </section>
 
-          {/* Section: Typography */}
+          {/* Section: Advanced Typography */}
           <section className="space-y-4">
             <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
               <Type className="w-3 h-3" />
-              <span>Typography</span>
+              <span>Advanced Typography</span>
             </div>
 
             <div className="grid gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Arabic Font</label>
+                <select 
+                  className="w-full bg-zinc-900 border border-white/10 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  value={config.fontFamily}
+                  onChange={(e) => setConfig({ ...config, fontFamily: e.target.value })}
+                >
+                  {ARABIC_FONTS.map(font => (
+                    <option key={font.id} value={font.id}>{font.label}</option>
+                  ))}
+                  <option value="Custom">Custom Uploaded Font</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Upload Custom Font (.ttf, .otf)</label>
+                <div 
+                  onClick={() => document.getElementById('font-upload')?.click()}
+                  className="p-4 rounded-xl border border-dashed border-white/10 hover:border-emerald-500/50 transition-all cursor-pointer flex items-center gap-3"
+                >
+                  <Upload className="w-4 h-4 text-zinc-500" />
+                  <span className="text-xs text-zinc-500">{customFontFile ? customFontFile.name : 'Choose font file...'}</span>
+                  <input id="font-upload" type="file" className="hidden" accept=".ttf,.otf" onChange={handleFontChange} />
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-sm font-medium text-zinc-300">Font Size ({config.fontSize}px)</label>
                 <input 
@@ -317,72 +450,75 @@ export default function App() {
                   onChange={(e) => setConfig({ ...config, fontSize: Number(e.target.value) })}
                 />
               </div>
-
-              <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 border border-white/5">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">Show Translation</p>
-                  <p className="text-[10px] text-zinc-500">English, Arabic, etc.</p>
-                </div>
-                <button 
-                  onClick={() => setConfig({ ...config, showTranslation: !config.showTranslation })}
-                  className={cn(
-                    "w-12 h-6 rounded-full transition-all relative",
-                    config.showTranslation ? "bg-emerald-500" : "bg-zinc-700"
-                  )}
-                >
-                  <div className={cn(
-                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                    config.showTranslation ? "left-7" : "left-1"
-                  )} />
-                </button>
-              </div>
             </div>
           </section>
 
-          {/* Section: Social */}
+          {/* Section: Visual Effects */}
           <section className="space-y-4">
             <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
-              <Sparkles className="w-3 h-3" />
-              <span>Social & Branding</span>
+              <Layers className="w-3 h-3" />
+              <span>Visual Effects</span>
             </div>
 
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-zinc-300">Social Handle</label>
-                <div className="relative">
-                  <input 
-                    type="text"
-                    placeholder="@username"
-                    className="w-full bg-zinc-900 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                    value={config.socialHandle}
-                    onChange={(e) => setConfig({ ...config, socialHandle: e.target.value })}
-                  />
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500">
-                    {config.socialPlatform === 'instagram' && <Instagram className="w-4 h-4" />}
-                    {config.socialPlatform === 'youtube' && <Youtube className="w-4 h-4" />}
-                    {config.socialPlatform === 'twitter' && <Twitter className="w-4 h-4" />}
-                  </div>
+            <div className="grid gap-6">
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-zinc-300">Overlay Effect</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {OVERLAYS.map(overlay => (
+                    <button
+                      key={overlay.id}
+                      onClick={() => setConfig({ ...config, overlayType: overlay.id as any })}
+                      className={cn(
+                        "p-3 rounded-xl border transition-all text-xs font-medium",
+                        config.overlayType === overlay.id 
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {overlay.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-2">
-                {['instagram', 'youtube', 'twitter', 'facebook'].map(platform => (
-                  <button
-                    key={platform}
-                    onClick={() => setConfig({ ...config, socialPlatform: platform })}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all flex justify-center",
-                      config.socialPlatform === platform 
-                        ? "bg-white/10 border-white/20 text-white" 
-                        : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
-                    )}
-                  >
-                    {platform === 'instagram' && <Instagram className="w-4 h-4" />}
-                    {platform === 'youtube' && <Youtube className="w-4 h-4" />}
-                    {platform === 'twitter' && <Twitter className="w-4 h-4" />}
-                    {platform === 'facebook' && <Facebook className="w-4 h-4" />}
-                  </button>
-                ))}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-zinc-300">Overlay Opacity</label>
+                  <span className="text-xs text-zinc-500">{Math.round(config.overlayOpacity * 100)}%</span>
+                </div>
+                <input 
+                  type="range" min="0" max="1" step="0.1"
+                  className="w-full accent-emerald-500"
+                  value={config.overlayOpacity}
+                  onChange={(e) => setConfig({ ...config, overlayOpacity: Number(e.target.value) })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-zinc-300">
+                    <Droplets className="w-3 h-3" />
+                    <label className="text-xs font-medium">Blur</label>
+                  </div>
+                  <input 
+                    type="range" min="0" max="20" step="1"
+                    className="w-full accent-emerald-500"
+                    value={config.blurBackground}
+                    onChange={(e) => setConfig({ ...config, blurBackground: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-zinc-300">
+                    <Sun className="w-3 h-3" />
+                    <label className="text-xs font-medium">Brightness</label>
+                  </div>
+                  <input 
+                    type="range" min="0" max="200" step="10"
+                    className="w-full accent-emerald-500"
+                    value={config.brightnessBackground}
+                    onChange={(e) => setConfig({ ...config, brightnessBackground: Number(e.target.value) })}
+                  />
+                </div>
               </div>
             </div>
           </section>
@@ -429,16 +565,24 @@ export default function App() {
               </div>
             </div>
             
-            {jobStatus?.videoUrl && (
-              <a 
-                href={jobStatus.videoUrl} 
-                download 
-                className="flex items-center gap-2 px-4 py-2 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all"
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => window.open('/api/test-canvas', '_blank')}
+                className="flex items-center gap-2 px-3 py-2 bg-zinc-800 text-white rounded-xl font-bold text-xs hover:bg-zinc-700 transition-all"
               >
-                <Download className="w-4 h-4" />
-                Download Video
-              </a>
-            )}
+                Test Canvas
+              </button>
+              {jobStatus?.videoUrl && (
+                <a 
+                  href={jobStatus.videoUrl} 
+                  download 
+                  className="flex items-center gap-2 px-4 py-2 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Video
+                </a>
+              )}
+            </div>
           </div>
 
           {/* Video Mock Preview */}
@@ -448,14 +592,34 @@ export default function App() {
             config.aspectRatio === '9:16' ? 'h-[70vh]' : 'w-full'
           )}>
             {/* Background */}
-            <div className="absolute inset-0 bg-zinc-900">
-              {bgPreview ? (
-                <img src={bgPreview} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
+              {firstBgPreview ? (
+                <img 
+                  src={firstBgPreview} 
+                  className="w-full h-full object-cover transition-all duration-700" 
+                  style={{ 
+                    filter: `blur(${config.blurBackground}px) brightness(${config.brightnessBackground}%)` 
+                  }}
+                />
               ) : (
                 <div className="w-full h-full bg-gradient-to-br from-zinc-800 to-zinc-950 flex items-center justify-center">
                   <Sparkles className="w-12 h-12 text-white/5" />
                 </div>
               )}
+              
+              {/* Overlay Effects */}
+              {config.overlayType !== 'none' && (
+                <div 
+                  className={cn(
+                    "absolute inset-0 pointer-events-none transition-opacity duration-500",
+                    config.overlayType === 'dust' && 'bg-[url("https://www.transparenttextures.com/patterns/stardust.png")]',
+                    config.overlayType === 'bokeh' && 'bg-gradient-to-tr from-yellow-500/20 via-transparent to-purple-500/20',
+                    config.overlayType === 'light_leaks' && 'bg-gradient-to-r from-orange-500/10 via-transparent to-blue-500/10'
+                  )}
+                  style={{ opacity: config.overlayOpacity }}
+                />
+              )}
+
               {/* Overlay for readability */}
               <div className="absolute inset-0 bg-black/40" />
             </div>
@@ -473,14 +637,18 @@ export default function App() {
                 className="space-y-6"
               >
                 <h3 
-                  className="font-amiri leading-relaxed"
-                  style={{ fontSize: `${config.fontSize}px`, color: config.fontColor }}
+                  className="font-amiri leading-relaxed transition-all duration-500"
+                  style={{ 
+                    fontSize: `${config.fontSize}px`, 
+                    color: config.fontColor,
+                    fontFamily: config.fontFamily === 'Custom' ? 'sans-serif' : config.fontFamily
+                  }}
                 >
-                  بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+                  {previewVerse.text}
                 </h3>
                 {config.showTranslation && (
                   <p className="text-white/80 text-lg font-medium max-w-md">
-                    In the name of Allah, the Entirely Merciful, the Especially Merciful.
+                    {previewVerse.translation}
                   </p>
                 )}
               </motion.div>
@@ -530,9 +698,22 @@ export default function App() {
                           <span className="text-xl font-bold">{jobStatus.progress}%</span>
                         </div>
                       </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xl font-bold">Rendering Video</h3>
-                        <p className="text-zinc-400 text-sm">Please wait while we process your high-quality video. This may take a moment.</p>
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <h3 className="text-xl font-bold">Rendering Video</h3>
+                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">{jobStatus.stage}</p>
+                        </div>
+                        
+                        {/* Detailed Progress Bar */}
+                        <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+                          <motion.div 
+                            className="h-full bg-emerald-500"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${jobStatus.progress}%` }}
+                          />
+                        </div>
+                        
+                        <p className="text-zinc-400 text-xs">Please wait while we process your high-quality video. This may take a moment.</p>
                       </div>
                     </>
                   )}
