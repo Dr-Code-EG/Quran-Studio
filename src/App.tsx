@@ -322,7 +322,7 @@ export default function App() {
                 >
                   {reciters.map(r => (
                     <option key={r.id} value={r.id}>
-                      {r.name}
+                      {r.reciter_name}
                     </option>
                   ))}
                 </select>
