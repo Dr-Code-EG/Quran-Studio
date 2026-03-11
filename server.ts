@@ -31,20 +31,26 @@ const DATA_DIR = path.join(baseDir, "data");
 });
 
 // Initialize Database
-const dbPath = path.join(DATA_DIR, "studio.db");
-const db = new Database(dbPath);
-db.exec(`
-  CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY,
-    status TEXT,
-    progress INTEGER,
-    stage TEXT,
-    config TEXT,
-    video_url TEXT,
-    error TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+let db: any;
+try {
+  const dbPath = path.join(DATA_DIR, "studio.db");
+  console.log(`Initializing database at ${dbPath}`);
+  db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      status TEXT,
+      progress INTEGER,
+      stage TEXT,
+      config TEXT,
+      video_url TEXT,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+} catch (dbErr: any) {
+  console.error("Database initialization failed:", dbErr);
+}
 
 app.use(cors());
 app.use(express.json());
@@ -59,7 +65,16 @@ const upload = multer({ storage });
 
 // API Routes
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", env: isVercel ? "vercel" : "local" });
+  res.json({ 
+    status: "ok", 
+    env: isVercel ? "vercel" : "local",
+    dbReady: !!db,
+    dirs: {
+      uploads: fs.existsSync(UPLOADS_DIR),
+      output: fs.existsSync(OUTPUT_DIR),
+      data: fs.existsSync(DATA_DIR)
+    }
+  });
 });
 
 app.get("/api/verse-preview", async (req, res) => {
@@ -86,18 +101,24 @@ app.get("/api/verse-preview", async (req, res) => {
 });
 
 app.get("/api/job-status/:jobId", (req, res) => {
-  const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(req.params.jobId) as any;
-  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (!db) return res.status(500).json({ error: "Database not initialized" });
   
-  res.json({
-    id: job.id,
-    status: job.status,
-    progress: job.progress,
-    stage: job.stage,
-    videoUrl: job.video_url,
-    error: job.error,
-    config: JSON.parse(job.config)
-  });
+  try {
+    const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(req.params.jobId) as any;
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    
+    res.json({
+      id: job.id,
+      status: job.status,
+      progress: job.progress,
+      stage: job.stage,
+      videoUrl: job.video_url,
+      error: job.error,
+      config: JSON.parse(job.config)
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to fetch job status: " + err.message });
+  }
 });
 
 app.post("/api/generate", upload.fields([
@@ -105,6 +126,8 @@ app.post("/api/generate", upload.fields([
   { name: 'watermark', maxCount: 1 },
   { name: 'customFont', maxCount: 1 }
 ]), async (req: any, res) => {
+  if (!db) return res.status(500).json({ error: "Database not initialized. SQLite might not be supported in this environment." });
+
   try {
     const jobId = uuidv4();
     const config = JSON.parse(req.body.config || "{}");
@@ -144,8 +167,9 @@ app.post("/api/generate", upload.fields([
     processVideo(jobId, config);
 
     res.json({ jobId });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to start video generation" });
+  } catch (error: any) {
+    console.error("Generate API error:", error);
+    res.status(500).json({ error: "Failed to start video generation: " + error.message });
   }
 });
 

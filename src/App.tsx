@@ -71,6 +71,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
   const [config, setConfig] = useState<VideoConfig>({
     surahId: 1,
@@ -199,6 +200,7 @@ export default function App() {
   const handleGenerate = async () => {
     setGenerating(true);
     setJobStatus(null);
+    setError(null);
     
     const formData = new FormData();
     formData.append('config', JSON.stringify(config));
@@ -215,8 +217,9 @@ export default function App() {
     try {
       const res = await axios.post('/api/generate', formData);
       setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
-    } catch (error) {
-      console.error("Generation failed", error);
+    } catch (err: any) {
+      console.error("Generation failed", err);
+      setError(err.response?.data?.error || "Failed to start video generation. Please check your server logs.");
       setGenerating(false);
     }
   };
@@ -602,6 +605,19 @@ export default function App() {
           </section>
 
           <div className="pt-8 pb-12">
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-start gap-3"
+              >
+                <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-bold text-red-500">Generation Error</p>
+                  <p className="text-xs text-red-400/80 leading-relaxed">{error}</p>
+                </div>
+              </motion.div>
+            )}
             <button 
               onClick={handleGenerate}
               disabled={generating}
