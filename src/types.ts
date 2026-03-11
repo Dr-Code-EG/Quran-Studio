@@ -8,6 +8,10 @@ export interface Surah {
   name_simple: string;
   verses_count: number;
   pages: number[];
+  translated_name: {
+    language_name: string;
+    name: string;
+  };
 }
 
 export interface Reciter {
@@ -15,8 +19,8 @@ export interface Reciter {
   reciter_name: string;
   style: string | null;
   translated_name: {
-    name: string;
     language_name: string;
+    name: string;
   };
 }
 

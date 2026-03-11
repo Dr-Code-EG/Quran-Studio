@@ -30,6 +30,7 @@ import axios from 'axios';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
+import { SURAHS, RECITERS } from './constants/quranData';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -65,9 +66,9 @@ const ARABIC_FONTS = [
 ];
 
 export default function App() {
-  const [surahs, setSurahs] = useState<Surah[]>([]);
-  const [reciters, setReciters] = useState<Reciter[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [surahs, setSurahs] = useState<Surah[]>(SURAHS);
+  const [reciters, setReciters] = useState<Reciter[]>(RECITERS);
+  const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   
@@ -103,35 +104,16 @@ export default function App() {
   const [previewVerse, setPreviewVerse] = useState({ text: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', translation: 'In the name of Allah, the Entirely Merciful, the Especially Merciful.' });
 
   useEffect(() => {
-    const fetchPreview = async () => {
+    const timer = setTimeout(async () => {
       try {
         const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
         setPreviewVerse(res.data);
       } catch (error) {
         console.error("Failed to fetch preview verse", error);
       }
-    };
-    const timer = setTimeout(fetchPreview, 500);
+    }, 500);
     return () => clearTimeout(timer);
   }, [config.surahId, config.verseFrom]);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [surahsRes, recitersRes] = await Promise.all([
-          axios.get('/api/surahs'),
-          axios.get('/api/reciters')
-        ]);
-        setSurahs(surahsRes.data.chapters);
-        setReciters(recitersRes.data.recitations);
-      } catch (error) {
-        console.error("Failed to fetch data", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
