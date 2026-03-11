@@ -95,7 +95,6 @@ export default function App() {
     overlayType: 'none',
     overlayOpacity: 0.5,
     transitionType: 'fade',
-    motionEffect: true,
     backgrounds: [],
   });
 
@@ -133,23 +132,20 @@ export default function App() {
           setGenerating(false);
         } else {
           // Schedule next poll only if still processing
-          timeoutId = setTimeout(pollStatus, 8000);
+          timeoutId = setTimeout(pollStatus, 5000);
         }
       } catch (error: any) {
         if (!isMounted) return;
+        console.error("Failed to check job status", error);
         
-        if (error.response?.status === 429) {
-          console.warn("Rate limited while checking job status, retrying in 15s...");
-          timeoutId = setTimeout(pollStatus, 15000);
-        } else {
-          console.error("Failed to check job status", error);
-          timeoutId = setTimeout(pollStatus, 8000);
-        }
+        // If we hit rate limiting, wait longer before next poll
+        const delay = error.response?.status === 429 ? 10000 : 5000;
+        timeoutId = setTimeout(pollStatus, delay);
       }
     };
 
     if (jobStatus && jobStatus.status === 'processing') {
-      timeoutId = setTimeout(pollStatus, 8000);
+      timeoutId = setTimeout(pollStatus, 5000);
     }
 
     return () => {
@@ -556,64 +552,6 @@ export default function App() {
                   <span className="text-[10px] font-bold uppercase tracking-tight">{ratio.label}</span>
                 </button>
               ))}
-            </div>
-          </section>
-
-          {/* Section: Transitions & Motion */}
-          <section className="space-y-4">
-            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
-              <Sparkles className="w-3 h-3" />
-              <span>Transitions & Motion</span>
-            </div>
-
-            <div className="grid gap-4">
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'none', label: 'None' },
-                  { id: 'fade', label: 'Fade' },
-                  { id: 'zoom', label: 'Zoom' },
-                ].map(trans => (
-                  <button
-                    key={trans.id}
-                    onClick={() => setConfig({ ...config, transitionType: trans.id as any })}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all text-xs font-medium",
-                      config.transitionType === trans.id 
-                        ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
-                        : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
-                    )}
-                  >
-                    {trans.label}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={() => setConfig({ ...config, motionEffect: !config.motionEffect })}
-                className={cn(
-                  "w-full p-4 rounded-xl border transition-all flex items-center justify-between",
-                  config.motionEffect 
-                    ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
-                    : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  <Play className={cn("w-4 h-4", config.motionEffect ? "text-emerald-500" : "text-zinc-500")} />
-                  <div className="text-left">
-                    <p className="text-sm font-bold">Ken Burns Effect</p>
-                    <p className="text-[10px] opacity-60 uppercase tracking-tight">Slow zoom/pan for images</p>
-                  </div>
-                </div>
-                <div className={cn(
-                  "w-10 h-5 rounded-full relative transition-all",
-                  config.motionEffect ? "bg-emerald-500" : "bg-zinc-700"
-                )}>
-                  <div className={cn(
-                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                    config.motionEffect ? "left-6" : "left-1"
-                  )} />
-                </div>
-              </button>
             </div>
           </section>
 

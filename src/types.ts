@@ -55,8 +55,7 @@ export interface VideoConfig {
   brightnessBackground: number;
   overlayType: 'none' | 'dust' | 'bokeh' | 'light_leaks';
   overlayOpacity: number;
-  transitionType: 'fade' | 'slide' | 'zoom' | 'none';
-  motionEffect: boolean;
+  transitionType: 'fade' | 'slide' | 'zoom';
   backgrounds: BackgroundConfig[];
 }
 

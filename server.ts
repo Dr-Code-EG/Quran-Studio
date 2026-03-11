@@ -62,16 +62,8 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", env: isVercel ? "vercel" : "local" });
 });
 
-const quranCache = new Map();
-
 app.get("/api/verse-preview", async (req, res) => {
   const { surahId, verseFrom } = req.query;
-  const cacheKey = `preview_${surahId}_${verseFrom}`;
-  
-  if (quranCache.has(cacheKey)) {
-    return res.json(quranCache.get(cacheKey));
-  }
-
   try {
     const response = await axios.get(`https://api.quran.com/api/v4/quran/verses/uthmani?chapter_number=${surahId}`);
     const verses = response.data.verses;
@@ -81,13 +73,10 @@ app.get("/api/verse-preview", async (req, res) => {
     const translations = transResponse.data.translations;
     const translation = translations.find((t: any) => t.resource_id === 131 && t.verse_id === verse.id);
 
-    const result = { 
+    res.json({ 
       text: verse?.text_uthmani || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
       translation: translation?.text || "In the name of Allah, the Entirely Merciful, the Especially Merciful."
-    };
-    
-    quranCache.set(cacheKey, result);
-    res.json(result);
+    });
   } catch (error) {
     res.json({ 
       text: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
@@ -487,34 +476,12 @@ async function processVideo(jobId: string, config: any) {
       command.input(ap);
     });
     
-    // Build filter complex to concatenate video and audio with optional transitions
-    const vFilters = framePaths.map((_, i) => {
-      let filter = `[${i}:v]`;
-      const duration = verseDurations[i];
-      
-      // Apply Ken Burns (Motion) Effect
-      if (config.motionEffect) {
-        // Zoom in slowly over the duration of the verse
-        const fps = 25;
-        const totalFrames = Math.ceil(duration * fps);
-        filter += `zoompan=z='min(zoom+0.0005,1.5)':d=${totalFrames}:s=${width}x${height},setsar=1`;
-      }
-
-      // Apply Transitions
-      if (config.transitionType === 'fade') {
-        filter += `,fade=t=in:st=0:d=0.5,fade=t=out:st=${duration - 0.5}:d=0.5`;
-      } else if (config.transitionType === 'zoom') {
-        filter += `,fade=t=in:st=0:d=0.8,fade=t=out:st=${duration - 0.8}:d=0.8`;
-      }
-      
-      return `${filter}[v${i}]`;
-    });
-
-    const vConcat = vFilters.map((_, i) => `[v${i}]`).join('') + `concat=n=${framePaths.length}:v=1:a=0[outv]`;
+    // Build filter complex to concatenate video and audio
+    const vConcat = framePaths.map((_, i) => `[${i}:v]`).join('') + `concat=n=${framePaths.length}:v=1:a=0[outv]`;
     const aConcat = verseAudioPaths.map((_, i) => `[${framePaths.length + i}:a]`).join('') + `concat=n=${verseAudioPaths.length}:v=0:a=1[outa]`;
     
     command
-      .complexFilter([...vFilters, vConcat, aConcat])
+      .complexFilter([vConcat, aConcat])
       .map('[outv]')
       .map('[outa]')
       .outputOptions([
