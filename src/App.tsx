@@ -95,6 +95,7 @@ export default function App() {
     overlayType: 'none',
     overlayOpacity: 0.5,
     transitionType: 'fade',
+    motionEffect: true,
     backgrounds: [],
   });
 
@@ -116,23 +117,46 @@ export default function App() {
   }, [config.surahId, config.verseFrom]);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (jobStatus && jobStatus.status === 'processing') {
-      interval = setInterval(async () => {
-        try {
-          const res = await axios.get(`/api/job-status/${jobStatus.id}`);
-          setJobStatus(res.data);
-          if (res.data.status === 'completed' || res.data.status === 'failed') {
-            clearInterval(interval);
-            setGenerating(false);
-          }
-        } catch (error) {
-          console.error("Failed to check job status", error);
+    let timeoutId: NodeJS.Timeout;
+    let isMounted = true;
+
+    const pollStatus = async () => {
+      if (!jobStatus || jobStatus.status !== 'processing' || !isMounted) return;
+
+      try {
+        const res = await axios.get(`/api/job-status/${jobStatus.id}`);
+        if (!isMounted) return;
+
+        setJobStatus(res.data);
+        
+        if (res.data.status === 'completed' || res.data.status === 'failed') {
+          setGenerating(false);
+        } else {
+          // Schedule next poll only if still processing
+          timeoutId = setTimeout(pollStatus, 8000);
         }
-      }, 2000);
+      } catch (error: any) {
+        if (!isMounted) return;
+        
+        if (error.response?.status === 429) {
+          console.warn("Rate limited while checking job status, retrying in 15s...");
+          timeoutId = setTimeout(pollStatus, 15000);
+        } else {
+          console.error("Failed to check job status", error);
+          timeoutId = setTimeout(pollStatus, 8000);
+        }
+      }
+    };
+
+    if (jobStatus && jobStatus.status === 'processing') {
+      timeoutId = setTimeout(pollStatus, 8000);
     }
-    return () => clearInterval(interval);
-  }, [jobStatus]);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [jobStatus?.id, jobStatus?.status]);
 
   const addBackground = () => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -505,6 +529,140 @@ export default function App() {
             </div>
           </section>
 
+          {/* Section: Aspect Ratio */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <Layout className="w-3 h-3" />
+              <span>Aspect Ratio & Platform</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {ASPECT_RATIOS.map(ratio => (
+                <button
+                  key={ratio.id}
+                  onClick={() => setConfig({ ...config, aspectRatio: ratio.id as any })}
+                  className={cn(
+                    "p-4 rounded-2xl border transition-all flex flex-col items-center gap-2",
+                    config.aspectRatio === ratio.id 
+                      ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                      : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                  )}
+                >
+                  <div className={cn(
+                    "border-2 rounded-sm",
+                    ratio.id === '9:16' ? 'w-4 h-7' : ratio.id === '16:9' ? 'w-7 h-4' : 'w-5 h-5',
+                    config.aspectRatio === ratio.id ? 'border-emerald-500' : 'border-zinc-700'
+                  )} />
+                  <span className="text-[10px] font-bold uppercase tracking-tight">{ratio.label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* Section: Transitions & Motion */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <Sparkles className="w-3 h-3" />
+              <span>Transitions & Motion</span>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'none', label: 'None' },
+                  { id: 'fade', label: 'Fade' },
+                  { id: 'zoom', label: 'Zoom' },
+                ].map(trans => (
+                  <button
+                    key={trans.id}
+                    onClick={() => setConfig({ ...config, transitionType: trans.id as any })}
+                    className={cn(
+                      "p-3 rounded-xl border transition-all text-xs font-medium",
+                      config.transitionType === trans.id 
+                        ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                        : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                    )}
+                  >
+                    {trans.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={() => setConfig({ ...config, motionEffect: !config.motionEffect })}
+                className={cn(
+                  "w-full p-4 rounded-xl border transition-all flex items-center justify-between",
+                  config.motionEffect 
+                    ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                    : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <Play className={cn("w-4 h-4", config.motionEffect ? "text-emerald-500" : "text-zinc-500")} />
+                  <div className="text-left">
+                    <p className="text-sm font-bold">Ken Burns Effect</p>
+                    <p className="text-[10px] opacity-60 uppercase tracking-tight">Slow zoom/pan for images</p>
+                  </div>
+                </div>
+                <div className={cn(
+                  "w-10 h-5 rounded-full relative transition-all",
+                  config.motionEffect ? "bg-emerald-500" : "bg-zinc-700"
+                )}>
+                  <div className={cn(
+                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                    config.motionEffect ? "left-6" : "left-1"
+                  )} />
+                </div>
+              </button>
+            </div>
+          </section>
+
+          {/* Section: Social Media */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <Instagram className="w-3 h-3" />
+              <span>Social Media Branding</span>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Platform</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { id: 'instagram', icon: <Instagram className="w-4 h-4" /> },
+                    { id: 'tiktok', icon: <Music className="w-4 h-4" /> },
+                    { id: 'youtube', icon: <Youtube className="w-4 h-4" /> },
+                    { id: 'facebook', icon: <Facebook className="w-4 h-4" /> },
+                  ].map(platform => (
+                    <button
+                      key={platform.id}
+                      onClick={() => setConfig({ ...config, socialPlatform: platform.id as any })}
+                      className={cn(
+                        "p-3 rounded-xl border transition-all flex items-center justify-center",
+                        config.socialPlatform === platform.id 
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {platform.icon}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Social Handle</label>
+                <input 
+                  type="text" 
+                  placeholder="@yourhandle"
+                  className="w-full bg-zinc-900 border border-white/10 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  value={config.socialHandle}
+                  onChange={(e) => setConfig({ ...config, socialHandle: e.target.value })}
+                />
+              </div>
+            </div>
+          </section>
+
           <div className="pt-8 pb-12">
             <button 
               onClick={handleGenerate}
@@ -702,27 +860,32 @@ export default function App() {
 
                   {jobStatus.status === 'completed' && (
                     <>
-                      <div className="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto">
-                        <CheckCircle2 className="w-10 h-10 text-emerald-500" />
+                      <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black shadow-2xl border border-white/10">
+                        <video 
+                          src={jobStatus.videoUrl} 
+                          controls 
+                          autoPlay
+                          className="w-full h-full object-contain"
+                        />
                       </div>
                       <div className="space-y-2">
                         <h3 className="text-xl font-bold">Video Ready!</h3>
-                        <p className="text-zinc-400 text-sm">Your Quranic video has been successfully generated and is ready for download.</p>
+                        <p className="text-zinc-400 text-sm">Your Quranic video has been successfully generated and is ready for viewing and download.</p>
                       </div>
-                      <div className="flex flex-col gap-3">
+                      <div className="flex flex-col sm:flex-row gap-3">
                         <a 
                           href={jobStatus.videoUrl} 
                           download 
-                          className="w-full bg-white text-black font-bold py-3 rounded-xl flex items-center justify-center gap-2"
+                          className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all"
                         >
                           <Download className="w-5 h-5" />
-                          Download Now
+                          Download
                         </a>
                         <button 
                           onClick={() => setJobStatus(null)}
-                          className="w-full bg-zinc-800 text-white font-bold py-3 rounded-xl"
+                          className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition-all"
                         >
-                          Close
+                          Create Another
                         </button>
                       </div>
                     </>
