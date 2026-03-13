@@ -48,6 +48,7 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json());
+  app.use('/output', express.static(OUTPUT_DIR));
 
   // Debug endpoint to check environment
   app.get("/api/debug-info", (req, res) => {
@@ -304,6 +305,12 @@ async function processVideo(jobId: string, config: any, jobs: any) {
     const baseDir = "/tmp";
     const OUTPUT_DIR = path.join(baseDir, "output");
 
+    // Ensure OUTPUT_DIR exists inside the process
+    if (!fs.existsSync(OUTPUT_DIR)) {
+      console.log(`Creating OUTPUT_DIR in processVideo: ${OUTPUT_DIR}`);
+      fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    }
+
     await updateJobLocal(jobId, { stage: "Fetching Quranic Data", progress: 10 });
     
     let width = 1080, height = 1920;
@@ -317,6 +324,11 @@ async function processVideo(jobId: string, config: any, jobs: any) {
       const verseNum = parseInt(v.verse_key.split(':')[1]);
       return verseNum >= config.verseFrom && verseNum <= config.verseTo;
     });
+
+    console.log(`Found ${targetVerses.length} target verses for job ${jobId}`);
+    if (targetVerses.length === 0) {
+      throw new Error(`No verses found for the range ${config.verseFrom}-${config.verseTo} in Surah ${config.surahId}`);
+    }
 
     await updateJobLocal(jobId, { stage: "Downloading Verse Audio", progress: 25 });
     const verseAudioPaths: string[] = [];
@@ -355,12 +367,19 @@ async function processVideo(jobId: string, config: any, jobs: any) {
       const verseNum = parseInt(verse.verse_key.split(':')[1]);
       const bg = config.backgrounds.find((b: any) => verseNum >= b.verseFrom && verseNum <= b.verseTo) || config.backgrounds[0];
       
+      console.log(`Generating frame ${i} for verse ${verse.verse_key}`);
       const canvas = new Canvas(width, height);
       const ctx = canvas.getContext("2d");
 
       if (bg?.localPath) {
-        const img = await loadImage(bg.localPath);
-        drawImageCover(ctx, img, width, height);
+        if (fs.existsSync(bg.localPath)) {
+          const img = await loadImage(bg.localPath);
+          drawImageCover(ctx, img, width, height);
+        } else {
+          console.warn(`Background image not found at ${bg.localPath}, using fallback`);
+          ctx.fillStyle = "#1a1a1a";
+          ctx.fillRect(0, 0, width, height);
+        }
       } else {
         ctx.fillStyle = "#1a1a1a";
         ctx.fillRect(0, 0, width, height);
@@ -390,23 +409,52 @@ async function processVideo(jobId: string, config: any, jobs: any) {
       drawSocialBranding(ctx, config.socialPlatform, config.socialHandle, width, height);
 
       const framePath = path.join(OUTPUT_DIR, `${jobId}_frame_${i}.png`);
-      await canvas.saveAs(framePath);
+      const buffer = await canvas.toBuffer("png");
+      fs.writeFileSync(framePath, buffer);
+      
+      if (!fs.existsSync(framePath)) {
+        throw new Error(`Failed to verify frame existence at ${framePath}`);
+      }
+      
+      console.log(`Successfully saved frame ${i} to ${framePath} (Size: ${buffer.length} bytes)`);
       framePaths.push(framePath);
+    }
+
+    console.log(`Total frames generated: ${framePaths.length}`);
+    console.log(`Total audio files downloaded: ${verseAudioPaths.length}`);
+    
+    if (framePaths.length === 0) throw new Error("No frames were generated");
+    if (verseAudioPaths.length === 0) throw new Error("No audio files were downloaded");
+    if (framePaths.length !== verseAudioPaths.length) {
+      console.warn(`Mismatch: ${framePaths.length} frames vs ${verseAudioPaths.length} audios`);
     }
 
     await updateJobLocal(jobId, { stage: "Merging Audio and Video", progress: 75 });
     const finalVideoName = `${jobId}_final.mp4`;
     const finalVideoPath = path.join(OUTPUT_DIR, finalVideoName);
+    
+    const safeVerseDurations = verseDurations.map(d => (typeof d === 'number' && d > 0) ? d : 5);
+    
     const command = ffmpeg();
-    framePaths.forEach((fp, i) => command.input(fp).inputOptions(['-loop 1', `-t ${verseDurations[i]}`]));
+    framePaths.forEach((fp, i) => command.input(fp).inputOptions(['-loop 1', `-t ${safeVerseDurations[i]}`]));
     verseAudioPaths.forEach(ap => command.input(ap));
     
-    const vConcat = framePaths.map((_, i) => `[${i}:v]`).join('') + `concat=n=${framePaths.length}:v=1:a=0[outv]`;
-    const aConcat = verseAudioPaths.map((_, i) => `[${framePaths.length + i}:a]`).join('') + `concat=n=${verseAudioPaths.length}:v=0:a=1[outa]`;
+    let vFilter, aFilter;
+    if (framePaths.length > 1) {
+      vFilter = framePaths.map((_, i) => `[${i}:v]`).join('') + `concat=n=${framePaths.length}:v=1:a=0[outv]`;
+    } else {
+      vFilter = `[0:v]format=yuv420p[outv]`;
+    }
+
+    if (verseAudioPaths.length > 1) {
+      aFilter = verseAudioPaths.map((_, i) => `[${framePaths.length + i}:a]`).join('') + `concat=n=${verseAudioPaths.length}:v=0:a=1[outa]`;
+    } else {
+      aFilter = `[${framePaths.length}:a]acopy[outa]`;
+    }
     
     await new Promise((resolve, reject) => {
       command
-        .complexFilter([vConcat, aConcat])
+        .complexFilter([vFilter, aFilter])
         .map('[outv]').map('[outa]')
         .outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-c:a aac', '-shortest'])
         .on('progress', (p) => { if (p.percent) updateJobLocal(jobId, { progress: 75 + Math.floor(p.percent * 0.2) }); })
