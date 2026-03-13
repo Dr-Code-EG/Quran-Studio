@@ -108,7 +108,9 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
-        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
+        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`, {
+          withCredentials: true
+        });
         setPreviewVerse({
           text: String(res.data?.text || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"),
           translation: String(res.data?.translation || "In the name of Allah, the Entirely Merciful, the Especially Merciful.")
@@ -126,7 +128,9 @@ export default function App() {
     if (jobStatus && jobStatus.status === 'processing' && jobStatus.id !== 'pending') {
       pollInterval = setInterval(async () => {
         try {
-          const res = await axios.get(`/api/job-status/${jobStatus.id}`);
+          const res = await axios.get(`/api/job-status/${jobStatus.id}`, {
+            withCredentials: true
+          });
           const data = res.data;
           if (data) {
             setJobStatus({
@@ -216,26 +220,44 @@ export default function App() {
     setJobStatus({ id: 'pending', status: 'processing', progress: 0, stage: 'Uploading Assets...' });
 
     try {
-      const res = await axios.post('/api/generate', formData);
+      const res = await axios.post('/api/generate', formData, {
+        withCredentials: true,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+      
+      // Check if response is HTML (Cookie Check)
+      if (typeof res.data === 'string' && res.data.includes('Cookie check')) {
+        throw new Error("PLATFORM_COOKIE_CHECK");
+      }
+
       if (res.data && res.data.jobId) {
         setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
       } else {
-        throw new Error("Server did not return a valid Job ID. Response: " + JSON.stringify(res.data));
+        throw new Error("Server did not return a valid Job ID. Response: " + (typeof res.data === 'object' ? JSON.stringify(res.data) : String(res.data).substring(0, 100)));
       }
     } catch (err: any) {
       console.error("Generation failed", err);
       setJobStatus(null); // Clear pending status on error
       
       let errorDetail = "";
-      if (err.response) {
-        errorDetail = ` (Status: ${err.response.status}, Data: ${JSON.stringify(err.response.data)})`;
+      if (err.message === "PLATFORM_COOKIE_CHECK") {
+        errorDetail = "Your browser is blocking required cookies. Please open the app in a new tab using the button in the top right, or click 'Authenticate' if you see a popup.";
+      } else if (err.response) {
+        // Check if error response is HTML
+        if (typeof err.response.data === 'string' && err.response.data.includes('Cookie check')) {
+          errorDetail = "Your browser is blocking required cookies. Please open the app in a new tab to continue.";
+        } else {
+          errorDetail = ` (Status: ${err.response.status}, Data: ${JSON.stringify(err.response.data)})`;
+        }
       } else if (err.request) {
         errorDetail = " (No response received from server)";
       } else {
         errorDetail = ` (${err.message})`;
       }
 
-      setError(`Generation Error: ${err.message}${errorDetail}`);
+      setError(`Generation Error: ${err.message === "PLATFORM_COOKIE_CHECK" ? "Cookie Blocked" : err.message}${errorDetail}`);
       console.error("Full error object:", err);
       setGenerating(false);
     }
@@ -641,9 +663,15 @@ export default function App() {
                         alert("Failed to fetch debug info");
                       }
                     }}
-                    className="mt-2 text-[10px] font-bold text-red-400 underline hover:text-red-300"
+                    className="mt-2 text-[10px] font-bold text-red-400 underline hover:text-red-300 mr-4"
                   >
                     View Server Debug Info
+                  </button>
+                  <button 
+                    onClick={() => window.open(window.location.href, '_blank')}
+                    className="mt-2 text-[10px] font-bold text-red-400 underline hover:text-red-300"
+                  >
+                    Open in New Tab
                   </button>
                 </div>
               </motion.div>

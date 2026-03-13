@@ -216,6 +216,12 @@ async function startServer() {
     res.json(job);
   });
 
+  // Catch-all for API routes to prevent falling through to Vite/SPA
+  app.all("/api/*", (req, res) => {
+    console.warn(`404 API Route: ${req.method} ${req.url}`);
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+  });
+
   // Global error handler
   app.use((err: any, req: any, res: any, next: any) => {
     console.error("Unhandled Express Error:", err);
