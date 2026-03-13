@@ -49,8 +49,40 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // Serve output directory as static
-  app.use("/output", express.static(OUTPUT_DIR));
+  // Debug endpoint to check environment
+  app.get("/api/debug-info", (req, res) => {
+    const info = {
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      memory: process.memoryUsage(),
+      uptime: process.uptime(),
+      dirs: {
+        uploads: fs.existsSync(UPLOADS_DIR),
+        output: fs.existsSync(OUTPUT_DIR)
+      },
+      ffmpeg: ffmpegInstaller.path,
+      ffprobe: ffprobeInstaller.path
+    };
+    res.json(info);
+  });
+
+  app.get("/api/test-canvas", async (req, res) => {
+    try {
+      const canvas = new Canvas(400, 200);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, 400, 200);
+      ctx.fillStyle = "black";
+      ctx.font = "30px Arial";
+      ctx.fillText("Canvas Test Successful", 50, 100);
+      const buffer = await canvas.toBuffer("png");
+      res.set("Content-Type", "image/png");
+      res.send(buffer);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message, stack: e.stack });
+    }
+  });
 
   const multerStorage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
@@ -102,7 +134,7 @@ async function startServer() {
   });
 
   app.post("/api/generate", (req, res, next) => {
-    console.log("Generate request received, starting upload...");
+    console.log("Generate request received");
     next();
   }, (req, res, next) => {
     upload.fields([
@@ -112,34 +144,33 @@ async function startServer() {
     ])(req, res, (err) => {
       if (err) {
         console.error("Multer error:", err);
-        return next(err);
+        return res.status(500).json({ error: "File upload failed: " + err.message });
       }
-      console.log("Upload completed successfully");
       next();
     });
   }, async (req: any, res) => {
     try {
-      console.log("Processing generate request body...");
+      console.log("Processing generate request...");
       const jobId = uuidv4();
       
       if (!req.body.config) {
-        console.error("Missing config in request body");
-        return res.status(400).json({ error: "Missing config in request body" });
+        return res.status(400).json({ error: "Missing configuration data" });
       }
       
       let config;
       try {
         config = JSON.parse(req.body.config);
       } catch (e) {
-        console.error("Invalid JSON in config:", req.body.config);
-        return res.status(400).json({ error: "Invalid JSON in config" });
+        return res.status(400).json({ error: "Invalid configuration format" });
       }
       
-      console.log(`Job ${jobId} initialized with config:`, JSON.stringify(config).substring(0, 200) + "...");
-      
-      // Handle background files - mapping them correctly by index
+      // Ensure backgrounds is an array
+      if (!Array.isArray(config.backgrounds)) {
+        config.backgrounds = [];
+      }
+
+      // Map uploaded files to backgrounds
       if (req.files['backgrounds']) {
-        console.log(`Received ${req.files['backgrounds'].length} background files`);
         let fileIndex = 0;
         for (let i = 0; i < config.backgrounds.length; i++) {
           if (fileIndex < req.files['backgrounds'].length) {
@@ -150,7 +181,6 @@ async function startServer() {
       }
 
       if (req.files['customFont']) {
-        console.log("Received custom font file");
         config.customFontLocalPath = req.files['customFont'][0].path;
       }
 
@@ -163,19 +193,19 @@ async function startServer() {
         createdAt: new Date().toISOString()
       };
 
+      // Start background process
       processVideo(jobId, config, jobs).catch(err => {
-        console.error(`Job ${jobId} background process failed:`, err);
-        updateJob(jobId, {
-          status: "failed",
-          error: err.message
-        });
+        console.error(`Job ${jobId} failed:`, err);
+        if (jobs[jobId]) {
+          jobs[jobId].status = "failed";
+          jobs[jobId].error = err.message || "Unknown error during processing";
+        }
       });
 
-      console.log(`Job ${jobId} started successfully`);
       res.json({ jobId });
     } catch (error: any) {
       console.error("Generate API error:", error);
-      res.status(500).json({ error: "Internal Server Error: " + error.message });
+      res.status(500).json({ error: error.message || "Internal Server Error" });
     }
   });
 

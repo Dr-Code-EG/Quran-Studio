@@ -236,6 +236,7 @@ export default function App() {
       }
 
       setError(`Generation Error: ${err.message}${errorDetail}`);
+      console.error("Full error object:", err);
       setGenerating(false);
     }
   };
@@ -631,6 +632,19 @@ export default function App() {
                 <div className="space-y-1">
                   <p className="text-sm font-bold text-red-500">Generation Error</p>
                   <p className="text-xs text-red-400/80 leading-relaxed">{typeof error === 'object' ? JSON.stringify(error) : String(error)}</p>
+                  <button 
+                    onClick={async () => {
+                      try {
+                        const res = await axios.get('/api/debug-info');
+                        alert(JSON.stringify(res.data, null, 2));
+                      } catch (e) {
+                        alert("Failed to fetch debug info");
+                      }
+                    }}
+                    className="mt-2 text-[10px] font-bold text-red-400 underline hover:text-red-300"
+                  >
+                    View Server Debug Info
+                  </button>
                 </div>
               </motion.div>
             )}
