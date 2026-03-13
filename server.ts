@@ -9,6 +9,7 @@ import { Canvas, loadImage, FontLibrary } from "skia-canvas";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
+import { createServer as createViteServer } from "vite";
 
 // Vercel config for longer execution
 export const config = {
@@ -19,131 +20,187 @@ export const config = {
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);
 
-const app = express();
-const PORT = 3000;
-
-// Ensure directories exist (for temporary processing)
-const baseDir = "/tmp"; 
-const UPLOADS_DIR = path.join(baseDir, "uploads");
-const OUTPUT_DIR = path.join(baseDir, "output");
-
-[UPLOADS_DIR, OUTPUT_DIR].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
-
-app.use(cors());
-app.use(express.json());
-
-// Serve output directory as static
-app.use("/output", express.static(OUTPUT_DIR));
-
-const multerStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-  filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
-});
-const upload = multer({ storage: multerStorage });
-
-// In-memory job store
-const jobs: Record<string, any> = {};
-
-// Helper to update job status
-async function updateJob(jobId: string, data: any) {
-  if (jobs[jobId]) {
-    jobs[jobId] = {
-      ...jobs[jobId],
-      ...data,
-      updatedAt: new Date().toISOString()
-    };
+async function startServer() {
+  console.log("Starting server...");
+  
+  // Test skia-canvas
+  try {
+    const testCanvas = new Canvas(10, 10);
+    const testCtx = testCanvas.getContext("2d");
+    testCtx.fillStyle = "red";
+    testCtx.fillRect(0, 0, 10, 10);
+    console.log("skia-canvas test successful");
+  } catch (e) {
+    console.error("skia-canvas test FAILED:", e);
   }
-}
 
-// API Routes
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "ok"
+  const app = express();
+  const PORT = 3000;
+
+  // Ensure directories exist (for temporary processing)
+  const baseDir = "/tmp"; 
+  const UPLOADS_DIR = path.join(baseDir, "uploads");
+  const OUTPUT_DIR = path.join(baseDir, "output");
+
+  [UPLOADS_DIR, OUTPUT_DIR].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   });
-});
 
-app.get("/api/verse-preview", async (req, res) => {
-  const { surahId, verseFrom } = req.query;
-  try {
-    const response = await axios.get(`https://api.quran.com/api/v4/quran/verses/uthmani?chapter_number=${surahId}`);
-    const verses = response.data.verses;
-    const verse = verses.find((v: any) => v.verse_key === `${surahId}:${verseFrom}`);
-    
-    const transResponse = await axios.get(`https://api.quran.com/api/v4/quran/translations/131?chapter_number=${surahId}`);
-    const translations = transResponse.data.translations;
-    const translation = translations.find((t: any) => t.resource_id === 131 && t.verse_id === verse.id);
+  app.use(cors());
+  app.use(express.json());
 
-    res.json({ 
-      text: verse?.text_uthmani || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-      translation: translation?.text || "In the name of Allah, the Entirely Merciful, the Especially Merciful."
-    });
-  } catch (error) {
-    res.json({ 
-      text: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-      translation: "In the name of Allah, the Entirely Merciful, the Especially Merciful."
-    });
+  // Serve output directory as static
+  app.use("/output", express.static(OUTPUT_DIR));
+
+  const multerStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+    filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
+  });
+  const upload = multer({ storage: multerStorage });
+
+  // In-memory job store
+  const jobs: Record<string, any> = {};
+
+  // Helper to update job status
+  async function updateJob(jobId: string, data: any) {
+    if (jobs[jobId]) {
+      jobs[jobId] = {
+        ...jobs[jobId],
+        ...data,
+        updatedAt: new Date().toISOString()
+      };
+    }
   }
-});
 
-app.post("/api/generate", upload.fields([
-  { name: 'backgrounds', maxCount: 10 },
-  { name: 'watermark', maxCount: 1 },
-  { name: 'customFont', maxCount: 1 }
-]), async (req: any, res) => {
-  try {
-    const jobId = uuidv4();
-    const config = JSON.parse(req.body.config || "{}");
-    
-    // Handle background files
-    if (req.files['backgrounds']) {
-      for (let i = 0; i < req.files['backgrounds'].length; i++) {
-        const file = req.files['backgrounds'][i];
-        if (config.backgrounds && config.backgrounds[i]) {
-          config.backgrounds[i].localPath = file.path;
+  // API Routes
+  app.get("/api/health", (req, res) => {
+    console.log("Health check requested");
+    res.json({ status: "ok" });
+  });
+
+  app.get("/api/verse-preview", async (req, res) => {
+    const { surahId, verseFrom } = req.query;
+    try {
+      const response = await axios.get(`https://api.quran.com/api/v4/quran/verses/uthmani?chapter_number=${surahId}`);
+      const verses = response.data.verses;
+      const verse = verses.find((v: any) => v.verse_key === `${surahId}:${verseFrom}`);
+      
+      const transResponse = await axios.get(`https://api.quran.com/api/v4/quran/translations/131?chapter_number=${surahId}`);
+      const translations = transResponse.data.translations;
+      const translation = translations.find((t: any) => t.resource_id === 131 && t.verse_id === verse.id);
+
+      res.json({ 
+        text: verse?.text_uthmani || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+        translation: translation?.text || "In the name of Allah, the Entirely Merciful, the Especially Merciful."
+      });
+    } catch (error) {
+      res.json({ 
+        text: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+        translation: "In the name of Allah, the Entirely Merciful, the Especially Merciful."
+      });
+    }
+  });
+
+  app.post("/api/generate", (req, res, next) => {
+    console.log("Generate request received");
+    next();
+  }, upload.fields([
+    { name: 'backgrounds', maxCount: 10 },
+    { name: 'watermark', maxCount: 1 },
+    { name: 'customFont', maxCount: 1 }
+  ]), async (req: any, res) => {
+    try {
+      console.log("Processing generate request body...");
+      const jobId = uuidv4();
+      
+      if (!req.body.config) {
+        console.error("Missing config in request body");
+        return res.status(400).json({ error: "Missing config in request body" });
+      }
+      
+      let config;
+      try {
+        config = JSON.parse(req.body.config);
+      } catch (e) {
+        console.error("Invalid JSON in config:", req.body.config);
+        return res.status(400).json({ error: "Invalid JSON in config" });
+      }
+      
+      console.log(`Job ${jobId} initialized with config:`, JSON.stringify(config).substring(0, 200) + "...");
+      
+      // Handle background files - mapping them correctly by index
+      if (req.files['backgrounds']) {
+        console.log(`Received ${req.files['backgrounds'].length} background files`);
+        let fileIndex = 0;
+        for (let i = 0; i < config.backgrounds.length; i++) {
+          if (fileIndex < req.files['backgrounds'].length) {
+             config.backgrounds[i].localPath = req.files['backgrounds'][fileIndex].path;
+             fileIndex++;
+          }
         }
       }
-    }
 
-    // Handle custom font
-    if (req.files['customFont']) {
-      config.customFontLocalPath = req.files['customFont'][0].path;
-    }
+      if (req.files['customFont']) {
+        console.log("Received custom font file");
+        config.customFontLocalPath = req.files['customFont'][0].path;
+      }
 
-    // Save job to in-memory store
-    jobs[jobId] = {
-      id: jobId,
-      status: "processing",
-      progress: 0,
-      stage: "Initializing",
-      config: config,
-      createdAt: new Date().toISOString()
-    };
+      jobs[jobId] = {
+        id: jobId,
+        status: "processing",
+        progress: 0,
+        stage: "Initializing",
+        config: config,
+        createdAt: new Date().toISOString()
+      };
 
-    // Start processing
-    processVideo(jobId, config).catch(err => {
-      console.error(`Job ${jobId} failed:`, err);
-      updateJob(jobId, {
-        status: "failed",
-        error: err.message
+      processVideo(jobId, config, jobs).catch(err => {
+        console.error(`Job ${jobId} background process failed:`, err);
+        updateJob(jobId, {
+          status: "failed",
+          error: err.message
+        });
       });
+
+      console.log(`Job ${jobId} started successfully`);
+      res.json({ jobId });
+    } catch (error: any) {
+      console.error("Generate API error:", error);
+      res.status(500).json({ error: "Internal Server Error: " + error.message });
+    }
+  });
+
+  app.get("/api/job-status/:id", async (req, res) => {
+    const job = jobs[req.params.id];
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    res.json(job);
+  });
+
+  // Global error handler
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("Unhandled Express Error:", err);
+    res.status(500).json({ error: "A server error has occurred: " + err.message });
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
     });
-
-    res.json({ jobId });
-  } catch (error: any) {
-    console.error("Generate API error:", error);
-    res.status(500).json({ error: "Failed to start video generation: " + error.message });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
-});
 
-app.get("/api/job-status/:id", async (req, res) => {
-  const job = jobs[req.params.id];
-  if (!job) {
-    return res.status(404).json({ error: "Job not found" });
-  }
-  res.json(job);
-});
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
 
 async function getAudioDuration(filePath: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -174,7 +231,6 @@ function drawImageCover(ctx: any, img: any, w: number, h: number, dx = 0, dy = 0
 
 function drawSocialBranding(ctx: any, platform: string, handle: string, w: number, h: number) {
   if (!handle) return;
-  
   const fontSize = 32;
   ctx.font = `bold ${fontSize}px Arial`;
   const textWidth = ctx.measureText(handle).width;
@@ -182,20 +238,28 @@ function drawSocialBranding(ctx: any, platform: string, handle: string, w: numbe
   const totalWidth = iconSize + 15 + textWidth + 40;
   const x = (w - totalWidth) / 2;
   const y = h - 100;
-
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.beginPath();
   ctx.roundRect(x, y - 45, totalWidth, 70, 35);
   ctx.fill();
-
   ctx.fillStyle = "white";
   ctx.textAlign = "left";
   ctx.fillText(handle, x + iconSize + 25, y + 2);
 }
 
-async function processVideo(jobId: string, config: any) {
+async function processVideo(jobId: string, config: any, jobs: any) {
+  console.log(`Starting processVideo for job ${jobId}`);
+  const updateJobLocal = async (id: string, data: any) => {
+    if (jobs[id]) {
+      jobs[id] = { ...jobs[id], ...data, updatedAt: new Date().toISOString() };
+    }
+  };
+
   try {
-    await updateJob(jobId, { stage: "Fetching Quranic Data", progress: 10 });
+    const baseDir = "/tmp";
+    const OUTPUT_DIR = path.join(baseDir, "output");
+
+    await updateJobLocal(jobId, { stage: "Fetching Quranic Data", progress: 10 });
     
     let width = 1080, height = 1920;
     if (config.aspectRatio === '16:9') { width = 1920; height = 1080; }
@@ -209,7 +273,7 @@ async function processVideo(jobId: string, config: any) {
       return verseNum >= config.verseFrom && verseNum <= config.verseTo;
     });
 
-    await updateJob(jobId, { stage: "Downloading Verse Audio", progress: 25 });
+    await updateJobLocal(jobId, { stage: "Downloading Verse Audio", progress: 25 });
     const verseAudioPaths: string[] = [];
     const verseDurations: number[] = [];
 
@@ -231,7 +295,7 @@ async function processVideo(jobId: string, config: any) {
       verseDurations.push(duration);
     }
 
-    await updateJob(jobId, { stage: "Generating Verse Images", progress: 45 });
+    await updateJobLocal(jobId, { stage: "Generating Verse Images", progress: 45 });
     const framePaths: string[] = [];
     
     let fontFamily = "Arial";
@@ -285,7 +349,7 @@ async function processVideo(jobId: string, config: any) {
       framePaths.push(framePath);
     }
 
-    await updateJob(jobId, { stage: "Merging Audio and Video", progress: 75 });
+    await updateJobLocal(jobId, { stage: "Merging Audio and Video", progress: 75 });
     const finalVideoName = `${jobId}_final.mp4`;
     const finalVideoPath = path.join(OUTPUT_DIR, finalVideoName);
     const command = ffmpeg();
@@ -300,13 +364,13 @@ async function processVideo(jobId: string, config: any) {
         .complexFilter([vConcat, aConcat])
         .map('[outv]').map('[outa]')
         .outputOptions(['-pix_fmt yuv420p', '-c:v libx264', '-c:a aac', '-shortest'])
-        .on('progress', (p) => { if (p.percent) updateJob(jobId, { progress: 75 + Math.floor(p.percent * 0.2) }); })
+        .on('progress', (p) => { if (p.percent) updateJobLocal(jobId, { progress: 75 + Math.floor(p.percent * 0.2) }); })
         .on('error', reject)
         .on('end', resolve)
         .save(finalVideoPath);
     });
 
-    await updateJob(jobId, { 
+    await updateJobLocal(jobId, { 
       status: "completed", 
       progress: 100, 
       stage: "Finalized", 
@@ -322,8 +386,11 @@ async function processVideo(jobId: string, config: any) {
 
   } catch (error: any) {
     console.error("Process error:", error);
-    await updateJob(jobId, { status: "failed", error: error.message });
+    await updateJobLocal(jobId, { status: "failed", error: error.message });
   }
 }
 
-export default app;
+startServer().catch(err => {
+  console.error("CRITICAL: Server failed to start:", err);
+});
+

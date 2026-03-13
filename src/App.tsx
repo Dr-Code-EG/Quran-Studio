@@ -220,14 +220,22 @@ export default function App() {
       if (res.data && res.data.jobId) {
         setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
       } else {
-        throw new Error("Server did not return a valid Job ID");
+        throw new Error("Server did not return a valid Job ID. Response: " + JSON.stringify(res.data));
       }
     } catch (err: any) {
       console.error("Generation failed", err);
       setJobStatus(null); // Clear pending status on error
-      const errorMsg = err.response?.data?.error;
-      const finalError = typeof errorMsg === 'object' ? (errorMsg.message || JSON.stringify(errorMsg)) : (errorMsg || err.message || "Failed to start video generation.");
-      setError(String(finalError));
+      
+      let errorDetail = "";
+      if (err.response) {
+        errorDetail = ` (Status: ${err.response.status}, Data: ${JSON.stringify(err.response.data)})`;
+      } else if (err.request) {
+        errorDetail = " (No response received from server)";
+      } else {
+        errorDetail = ` (${err.message})`;
+      }
+
+      setError(`Generation Error: ${err.message}${errorDetail}`);
       setGenerating(false);
     }
   };
