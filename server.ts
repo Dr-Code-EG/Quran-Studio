@@ -5,26 +5,10 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
-import { initializeApp } from "firebase/app";
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  getDoc, 
-  serverTimestamp 
-} from "firebase/firestore";
-import { 
-  getStorage, 
-  ref, 
-  uploadBytes, 
-  getDownloadURL 
-} from "firebase/storage";
 import { Canvas, loadImage, FontLibrary } from "skia-canvas";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
-import firebaseConfig from "./firebase-applet-config.json";
 
 // Vercel config for longer execution
 export const config = {
@@ -34,11 +18,6 @@ export const config = {
 // Set ffmpeg paths
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);
-
-// Initialize Firebase Client SDK (works on server too)
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
-const storage = getStorage(firebaseApp);
 
 const app = express();
 const PORT = 3000;
@@ -55,30 +34,33 @@ const OUTPUT_DIR = path.join(baseDir, "output");
 app.use(cors());
 app.use(express.json());
 
+// Serve output directory as static
+app.use("/output", express.static(OUTPUT_DIR));
+
 const multerStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
   filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage: multerStorage });
 
-// Helper to update job status in Firestore
+// In-memory job store
+const jobs: Record<string, any> = {};
+
+// Helper to update job status
 async function updateJob(jobId: string, data: any) {
-  try {
-    const jobRef = doc(db, "jobs", jobId);
-    await updateDoc(jobRef, {
+  if (jobs[jobId]) {
+    jobs[jobId] = {
+      ...jobs[jobId],
       ...data,
-      updatedAt: serverTimestamp()
-    });
-  } catch (error) {
-    console.error(`Error updating job ${jobId}:`, error);
+      updatedAt: new Date().toISOString()
+    };
   }
 }
 
 // API Routes
 app.get("/api/health", (req, res) => {
   res.json({ 
-    status: "ok", 
-    firebase: !!db
+    status: "ok"
   });
 });
 
@@ -114,38 +96,30 @@ app.post("/api/generate", upload.fields([
     const jobId = uuidv4();
     const config = JSON.parse(req.body.config || "{}");
     
-    // Upload files to Firebase Storage immediately
+    // Handle background files
     if (req.files['backgrounds']) {
       for (let i = 0; i < req.files['backgrounds'].length; i++) {
         const file = req.files['backgrounds'][i];
-        const destination = `uploads/${jobId}/bg_${i}${path.extname(file.originalname)}`;
-        const fileBuffer = fs.readFileSync(file.path);
-        const storageRef = ref(storage, destination);
-        await uploadBytes(storageRef, fileBuffer);
         if (config.backgrounds && config.backgrounds[i]) {
-          config.backgrounds[i].storagePath = destination;
+          config.backgrounds[i].localPath = file.path;
         }
       }
     }
 
+    // Handle custom font
     if (req.files['customFont']) {
-      const file = req.files['customFont'][0];
-      const destination = `uploads/${jobId}/font${path.extname(file.originalname)}`;
-      const fileBuffer = fs.readFileSync(file.path);
-      const storageRef = ref(storage, destination);
-      await uploadBytes(storageRef, fileBuffer);
-      config.customFontStoragePath = destination;
+      config.customFontLocalPath = req.files['customFont'][0].path;
     }
 
-    // Save job to Firestore
-    await setDoc(doc(db, "jobs", jobId), {
+    // Save job to in-memory store
+    jobs[jobId] = {
       id: jobId,
       status: "processing",
       progress: 0,
       stage: "Initializing",
-      config: JSON.stringify(config),
-      createdAt: serverTimestamp()
-    });
+      config: config,
+      createdAt: new Date().toISOString()
+    };
 
     // Start processing
     processVideo(jobId, config).catch(err => {
@@ -164,15 +138,11 @@ app.post("/api/generate", upload.fields([
 });
 
 app.get("/api/job-status/:id", async (req, res) => {
-  try {
-    const jobDoc = await getDoc(doc(db, "jobs", req.params.id));
-    if (!jobDoc.exists()) {
-      return res.status(404).json({ error: "Job not found" });
-    }
-    res.json(jobDoc.data());
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  const job = jobs[req.params.id];
+  if (!job) {
+    return res.status(404).json({ error: "Job not found" });
   }
+  res.json(job);
 });
 
 async function getAudioDuration(filePath: string): Promise<number> {
@@ -215,7 +185,6 @@ function drawSocialBranding(ctx: any, platform: string, handle: string, w: numbe
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.beginPath();
-  // skia-canvas roundRect
   ctx.roundRect(x, y - 45, totalWidth, 70, 35);
   ctx.fill();
 
@@ -266,13 +235,9 @@ async function processVideo(jobId: string, config: any) {
     const framePaths: string[] = [];
     
     let fontFamily = "Arial";
-    if (config.customFontStoragePath) {
-      const fontPath = path.join(baseDir, `font_${jobId}${path.extname(config.customFontStoragePath)}`);
-      const fontUrl = await getDownloadURL(ref(storage, config.customFontStoragePath));
-      const fontRes = await axios.get(fontUrl, { responseType: 'arraybuffer' });
-      fs.writeFileSync(fontPath, Buffer.from(fontRes.data));
+    if (config.customFontLocalPath) {
       const fontName = `CustomFont_${jobId}`;
-      FontLibrary.use(fontName, fontPath);
+      FontLibrary.use(fontName, config.customFontLocalPath);
       fontFamily = fontName;
     }
     
@@ -284,14 +249,9 @@ async function processVideo(jobId: string, config: any) {
       const canvas = new Canvas(width, height);
       const ctx = canvas.getContext("2d");
 
-      if (bg?.storagePath) {
-        const localBgPath = path.join(baseDir, `bg_${jobId}_${i}${path.extname(bg.storagePath)}`);
-        const bgUrl = await getDownloadURL(ref(storage, bg.storagePath));
-        const bgRes = await axios.get(bgUrl, { responseType: 'arraybuffer' });
-        fs.writeFileSync(localBgPath, Buffer.from(bgRes.data));
-        const img = await loadImage(localBgPath);
+      if (bg?.localPath) {
+        const img = await loadImage(bg.localPath);
         drawImageCover(ctx, img, width, height);
-        fs.unlinkSync(localBgPath);
       } else {
         ctx.fillStyle = "#1a1a1a";
         ctx.fillRect(0, 0, width, height);
@@ -326,7 +286,8 @@ async function processVideo(jobId: string, config: any) {
     }
 
     await updateJob(jobId, { stage: "Merging Audio and Video", progress: 75 });
-    const finalVideoPath = path.join(OUTPUT_DIR, `${jobId}_final.mp4`);
+    const finalVideoName = `${jobId}_final.mp4`;
+    const finalVideoPath = path.join(OUTPUT_DIR, finalVideoName);
     const command = ffmpeg();
     framePaths.forEach((fp, i) => command.input(fp).inputOptions(['-loop 1', `-t ${verseDurations[i]}`]));
     verseAudioPaths.forEach(ap => command.input(ap));
@@ -345,22 +306,19 @@ async function processVideo(jobId: string, config: any) {
         .save(finalVideoPath);
     });
 
-    await updateJob(jobId, { stage: "Uploading Video", progress: 95 });
-    const videoDest = `output/${jobId}_final.mp4`;
-    const videoBuffer = fs.readFileSync(finalVideoPath);
-    const videoRef = ref(storage, videoDest);
-    await uploadBytes(videoRef, videoBuffer);
-    const url = await getDownloadURL(videoRef);
-
     await updateJob(jobId, { 
       status: "completed", 
       progress: 100, 
       stage: "Finalized", 
-      videoUrl: url 
+      videoUrl: `/output/${finalVideoName}` 
     });
 
-    // Cleanup
-    [...framePaths, ...verseAudioPaths, finalVideoPath].forEach(p => { if(fs.existsSync(p)) fs.unlinkSync(p); });
+    // Cleanup temp files
+    [...framePaths, ...verseAudioPaths].forEach(p => { if(fs.existsSync(p)) fs.unlinkSync(p); });
+    if (config.customFontLocalPath && fs.existsSync(config.customFontLocalPath)) fs.unlinkSync(config.customFontLocalPath);
+    config.backgrounds.forEach((bg: any) => {
+      if (bg.localPath && fs.existsSync(bg.localPath)) fs.unlinkSync(bg.localPath);
+    });
 
   } catch (error: any) {
     console.error("Process error:", error);

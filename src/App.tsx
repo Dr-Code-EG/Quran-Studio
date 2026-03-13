@@ -29,8 +29,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from './lib/firebase';
 import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
 import { SURAHS, RECITERS } from './constants/quranData';
 
@@ -123,39 +121,35 @@ export default function App() {
   }, [config.surahId, config.verseFrom]);
 
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
+    let pollInterval: NodeJS.Timeout | undefined;
 
     if (jobStatus && jobStatus.status === 'processing' && jobStatus.id !== 'pending') {
-      unsubscribe = onSnapshot(doc(db, 'jobs', jobStatus.id), (doc) => {
+      pollInterval = setInterval(async () => {
         try {
-          if (doc.exists()) {
-            const data = doc.data();
-            if (data) {
-              setJobStatus({
-                id: String(data.id || jobStatus.id),
-                status: (data.status === 'completed' || data.status === 'failed' || data.status === 'processing') ? data.status : 'processing',
-                progress: typeof data.progress === 'number' ? data.progress : 0,
-                stage: typeof data.stage === 'object' ? JSON.stringify(data.stage) : String(data.stage || 'Processing...'),
-                videoUrl: data.videoUrl ? String(data.videoUrl) : undefined,
-                error: data.error ? (typeof data.error === 'object' ? (data.error.message || JSON.stringify(data.error)) : String(data.error)) : null
-              });
-              if (data.status === 'completed' || data.status === 'failed') {
-                setGenerating(false);
-              }
+          const res = await axios.get(`/api/job-status/${jobStatus.id}`);
+          const data = res.data;
+          if (data) {
+            setJobStatus({
+              id: String(data.id || jobStatus.id),
+              status: (data.status === 'completed' || data.status === 'failed' || data.status === 'processing') ? data.status : 'processing',
+              progress: typeof data.progress === 'number' ? data.progress : 0,
+              stage: typeof data.stage === 'object' ? JSON.stringify(data.stage) : String(data.stage || 'Processing...'),
+              videoUrl: data.videoUrl ? String(data.videoUrl) : undefined,
+              error: data.error ? (typeof data.error === 'object' ? (data.error.message || JSON.stringify(data.error)) : String(data.error)) : null
+            });
+            if (data.status === 'completed' || data.status === 'failed') {
+              setGenerating(false);
+              if (pollInterval) clearInterval(pollInterval);
             }
           }
         } catch (err) {
-          console.error("Error processing job update:", err);
+          console.error("Error polling job status:", err);
         }
-      }, (error) => {
-        console.error("Firestore snapshot error:", error);
-        setError("Lost connection to generation status. Please check your internet.");
-        setGenerating(false);
-      });
+      }, 2000);
     }
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (pollInterval) clearInterval(pollInterval);
     };
   }, [jobStatus?.id, jobStatus?.status]);
 
