@@ -26,6 +26,11 @@ import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 import firebaseConfig from "../firebase-applet-config.json";
 
+// Vercel config for longer execution
+export const config = {
+  maxDuration: 60, // 60 seconds (max for Pro, Hobby is 10s but this doesn't hurt)
+};
+
 // Set ffmpeg paths
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);

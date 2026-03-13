@@ -122,15 +122,32 @@ export default function App() {
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
 
-    if (jobStatus && jobStatus.status === 'processing') {
+    if (jobStatus && jobStatus.status === 'processing' && jobStatus.id !== 'pending') {
       unsubscribe = onSnapshot(doc(db, 'jobs', jobStatus.id), (doc) => {
-        if (doc.exists()) {
-          const data = doc.data() as JobStatus;
-          setJobStatus(data);
-          if (data.status === 'completed' || data.status === 'failed') {
-            setGenerating(false);
+        try {
+          if (doc.exists()) {
+            const data = doc.data();
+            if (data) {
+              setJobStatus({
+                id: data.id || jobStatus.id,
+                status: data.status || 'processing',
+                progress: typeof data.progress === 'number' ? data.progress : 0,
+                stage: data.stage || 'Processing...',
+                videoUrl: data.videoUrl,
+                error: data.error
+              });
+              if (data.status === 'completed' || data.status === 'failed') {
+                setGenerating(false);
+              }
+            }
           }
+        } catch (err) {
+          console.error("Error processing job update:", err);
         }
+      }, (error) => {
+        console.error("Firestore snapshot error:", error);
+        setError("Lost connection to generation status. Please check your internet.");
+        setGenerating(false);
       });
     }
 
@@ -203,7 +220,11 @@ export default function App() {
 
     try {
       const res = await axios.post('/api/generate', formData);
-      setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
+      if (res.data && res.data.jobId) {
+        setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
+      } else {
+        throw new Error("Server did not return a valid Job ID");
+      }
     } catch (err: any) {
       console.error("Generation failed", err);
       setJobStatus(null); // Clear pending status on error
@@ -760,8 +781,18 @@ export default function App() {
                 exit={{ opacity: 0, scale: 0.9 }}
                 className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm"
               >
-                <div className="w-full max-w-md glass p-8 rounded-3xl space-y-6 text-center">
-                  {jobStatus.status === 'processing' && (
+                <div className="w-full max-w-md glass p-8 rounded-3xl space-y-6 text-center relative">
+                  <button 
+                    onClick={() => {
+                      setJobStatus(null);
+                      setGenerating(false);
+                    }}
+                    className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors"
+                  >
+                    <Plus className="w-5 h-5 rotate-45 text-zinc-400" />
+                  </button>
+
+                  {(jobStatus.status === 'processing' || !jobStatus.status) && (
                     <>
                       <div className="relative w-24 h-24 mx-auto">
                         <svg className="w-full h-full" viewBox="0 0 100 100">
@@ -773,17 +804,17 @@ export default function App() {
                             fill="transparent" 
                             r="40" cx="50" cy="50"
                             initial={{ strokeDasharray: "0 251" }}
-                            animate={{ strokeDasharray: `${(jobStatus.progress / 100) * 251} 251` }}
+                            animate={{ strokeDasharray: `${((jobStatus.progress || 0) / 100) * 251} 251` }}
                           />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <span className="text-xl font-bold">{jobStatus.progress}%</span>
+                          <span className="text-xl font-bold">{jobStatus.progress || 0}%</span>
                         </div>
                       </div>
                       <div className="space-y-4">
                         <div className="space-y-1">
                           <h3 className="text-xl font-bold">Rendering Video</h3>
-                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">{jobStatus.stage}</p>
+                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">{jobStatus.stage || 'Processing...'}</p>
                         </div>
                         
                         {/* Detailed Progress Bar */}
@@ -791,7 +822,7 @@ export default function App() {
                           <motion.div 
                             className="h-full bg-emerald-500"
                             initial={{ width: 0 }}
-                            animate={{ width: `${jobStatus.progress}%` }}
+                            animate={{ width: `${jobStatus.progress || 0}%` }}
                           />
                         </div>
                         
@@ -849,6 +880,13 @@ export default function App() {
                         Try Again
                       </button>
                     </>
+                  )}
+
+                  {jobStatus.status && !['processing', 'completed', 'failed'].includes(jobStatus.status) && (
+                    <div className="py-12 space-y-4">
+                      <Loader2 className="w-12 h-12 animate-spin mx-auto text-emerald-500" />
+                      <p className="text-zinc-400">Synchronizing status...</p>
+                    </div>
                   )}
                 </div>
               </motion.div>
