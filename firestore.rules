@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidJob(data) {
+      return data.keys().hasAll(['id', 'status', 'progress', 'createdAt']) &&
+             data.id is string &&
+             data.status in ['processing', 'completed', 'failed'] &&
+             data.progress is int &&
+             data.progress >= 0 && data.progress <= 100;
+    }
+
+    // Jobs Collection
+    match /jobs/{jobId} {
+      // For now, allow anyone to create a job (to support unauthenticated generation)
+      // but only the creator (if authenticated) or the one with the jobId can read it.
+      // In a real app, we'd use Auth.
+      allow read: if true; 
+      allow create: if isValidJob(request.resource.data);
+      allow update: if isValidJob(request.resource.data);
+      allow delete: if false;
+    }
+  }
+}

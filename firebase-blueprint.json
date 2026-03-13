@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "Job": {
+      "title": "Video Generation Job",
+      "description": "Represents a video generation task and its current status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string", "enum": ["processing", "completed", "failed"] },
+        "progress": { "type": "integer" },
+        "stage": { "type": "string" },
+        "config": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "error": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "status", "progress", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/jobs/{jobId}": {
+      "schema": "Job",
+      "description": "Collection of video generation jobs."
+    }
+  }
+}
