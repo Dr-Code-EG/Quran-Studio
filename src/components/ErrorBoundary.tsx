@@ -39,7 +39,11 @@ class ErrorBoundary extends Component<Props, State> {
               </p>
               {this.state.error && (
                 <div className="mt-4 p-3 bg-black/40 rounded-xl text-left overflow-auto max-h-32">
-                  <code className="text-xs text-red-400">{this.state.error.message}</code>
+                  <code className="text-xs text-red-400">
+                    {typeof this.state.error === 'object' 
+                      ? (this.state.error.message || JSON.stringify(this.state.error)) 
+                      : String(this.state.error)}
+                  </code>
                 </div>
               )}
             </div>

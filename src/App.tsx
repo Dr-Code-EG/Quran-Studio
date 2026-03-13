@@ -111,7 +111,10 @@ export default function App() {
     const timer = setTimeout(async () => {
       try {
         const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
-        setPreviewVerse(res.data);
+        setPreviewVerse({
+          text: String(res.data?.text || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"),
+          translation: String(res.data?.translation || "In the name of Allah, the Entirely Merciful, the Especially Merciful.")
+        });
       } catch (error) {
         console.error("Failed to fetch preview verse", error);
       }
@@ -129,12 +132,12 @@ export default function App() {
             const data = doc.data();
             if (data) {
               setJobStatus({
-                id: data.id || jobStatus.id,
-                status: data.status || 'processing',
+                id: String(data.id || jobStatus.id),
+                status: (data.status === 'completed' || data.status === 'failed' || data.status === 'processing') ? data.status : 'processing',
                 progress: typeof data.progress === 'number' ? data.progress : 0,
-                stage: data.stage || 'Processing...',
-                videoUrl: data.videoUrl,
-                error: data.error
+                stage: typeof data.stage === 'object' ? JSON.stringify(data.stage) : String(data.stage || 'Processing...'),
+                videoUrl: data.videoUrl ? String(data.videoUrl) : undefined,
+                error: data.error ? (typeof data.error === 'object' ? (data.error.message || JSON.stringify(data.error)) : String(data.error)) : null
               });
               if (data.status === 'completed' || data.status === 'failed') {
                 setGenerating(false);
@@ -228,7 +231,9 @@ export default function App() {
     } catch (err: any) {
       console.error("Generation failed", err);
       setJobStatus(null); // Clear pending status on error
-      setError(err.response?.data?.error || "Failed to start video generation. Please check your server logs.");
+      const errorMsg = err.response?.data?.error;
+      const finalError = typeof errorMsg === 'object' ? (errorMsg.message || JSON.stringify(errorMsg)) : (errorMsg || err.message || "Failed to start video generation.");
+      setError(String(finalError));
       setGenerating(false);
     }
   };
@@ -623,7 +628,7 @@ export default function App() {
                 <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-sm font-bold text-red-500">Generation Error</p>
-                  <p className="text-xs text-red-400/80 leading-relaxed">{error}</p>
+                  <p className="text-xs text-red-400/80 leading-relaxed">{typeof error === 'object' ? JSON.stringify(error) : String(error)}</p>
                 </div>
               </motion.div>
             )}
@@ -747,11 +752,11 @@ export default function App() {
                     fontFamily: config.fontFamily === 'Custom' ? 'sans-serif' : config.fontFamily
                   }}
                 >
-                  {previewVerse.text}
+                  {typeof previewVerse.text === 'object' ? JSON.stringify(previewVerse.text) : String(previewVerse.text)}
                 </h3>
                 {config.showTranslation && (
                   <p className="text-white/80 text-lg font-medium max-w-md">
-                    {previewVerse.translation}
+                    {typeof previewVerse.translation === 'object' ? JSON.stringify(previewVerse.translation) : String(previewVerse.translation)}
                   </p>
                 )}
               </motion.div>
@@ -814,7 +819,9 @@ export default function App() {
                       <div className="space-y-4">
                         <div className="space-y-1">
                           <h3 className="text-xl font-bold">Rendering Video</h3>
-                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">{jobStatus.stage || 'Processing...'}</p>
+                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">
+                            {typeof jobStatus.stage === 'object' ? JSON.stringify(jobStatus.stage) : String(jobStatus.stage || 'Processing...')}
+                          </p>
                         </div>
                         
                         {/* Detailed Progress Bar */}
@@ -871,7 +878,7 @@ export default function App() {
                       </div>
                       <div className="space-y-2">
                         <h3 className="text-xl font-bold">Generation Failed</h3>
-                        <p className="text-zinc-400 text-sm">{jobStatus.error || "An unexpected error occurred during processing."}</p>
+                        <p className="text-zinc-400 text-sm">{typeof jobStatus.error === 'object' ? JSON.stringify(jobStatus.error) : (jobStatus.error || "An unexpected error occurred during processing.")}</p>
                       </div>
                       <button 
                         onClick={() => setJobStatus(null)}
