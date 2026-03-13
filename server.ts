@@ -102,13 +102,22 @@ async function startServer() {
   });
 
   app.post("/api/generate", (req, res, next) => {
-    console.log("Generate request received");
+    console.log("Generate request received, starting upload...");
     next();
-  }, upload.fields([
-    { name: 'backgrounds', maxCount: 10 },
-    { name: 'watermark', maxCount: 1 },
-    { name: 'customFont', maxCount: 1 }
-  ]), async (req: any, res) => {
+  }, (req, res, next) => {
+    upload.fields([
+      { name: 'backgrounds', maxCount: 10 },
+      { name: 'watermark', maxCount: 1 },
+      { name: 'customFont', maxCount: 1 }
+    ])(req, res, (err) => {
+      if (err) {
+        console.error("Multer error:", err);
+        return next(err);
+      }
+      console.log("Upload completed successfully");
+      next();
+    });
+  }, async (req: any, res) => {
     try {
       console.log("Processing generate request body...");
       const jobId = uuidv4();
@@ -179,7 +188,13 @@ async function startServer() {
   // Global error handler
   app.use((err: any, req: any, res: any, next: any) => {
     console.error("Unhandled Express Error:", err);
-    res.status(500).json({ error: "A server error has occurred: " + err.message });
+    res.status(500).json({ 
+      error: {
+        code: "500",
+        message: err.message || "A server error has occurred",
+        stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+      }
+    });
   });
 
   // Vite middleware for development
