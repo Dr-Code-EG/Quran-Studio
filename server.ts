@@ -58,12 +58,23 @@ async function startServer() {
       arch: process.arch,
       memory: process.memoryUsage(),
       uptime: process.uptime(),
+      env: {
+        NODE_ENV: process.env.NODE_ENV,
+        VERCEL: process.env.VERCEL,
+        PORT: process.env.PORT
+      },
       dirs: {
         uploads: fs.existsSync(UPLOADS_DIR),
         output: fs.existsSync(OUTPUT_DIR)
       },
-      ffmpeg: ffmpegInstaller.path,
-      ffprobe: ffprobeInstaller.path
+      ffmpeg: {
+        path: ffmpegInstaller.path,
+        exists: fs.existsSync(ffmpegInstaller.path)
+      },
+      ffprobe: {
+        path: ffprobeInstaller.path,
+        exists: fs.existsSync(ffprobeInstaller.path)
+      }
     };
     res.json(info);
   });
@@ -135,7 +146,7 @@ async function startServer() {
   });
 
   app.post("/api/generate", (req, res, next) => {
-    console.log("Generate request received");
+    console.log(`Generate request received. Content-Length: ${req.headers['content-length']}`);
     next();
   }, (req, res, next) => {
     upload.fields([
@@ -147,15 +158,23 @@ async function startServer() {
         console.error("Multer error:", err);
         return res.status(500).json({ error: "File upload failed: " + err.message });
       }
+      console.log("Files uploaded successfully");
       next();
     });
   }, async (req: any, res) => {
     try {
-      console.log("Processing generate request...");
+      console.log("Processing generate request body...");
       const jobId = uuidv4();
       
       if (!req.body.config) {
+        console.error("Missing config in body. Keys:", Object.keys(req.body || {}));
         return res.status(400).json({ error: "Missing configuration data" });
+      }
+      
+      // Check for FFmpeg
+      if (!fs.existsSync(ffmpegInstaller.path)) {
+        console.error("FFmpeg not found at:", ffmpegInstaller.path);
+        return res.status(500).json({ error: "FFmpeg binary not found on server. This environment might not support video processing." });
       }
       
       let config;
@@ -171,18 +190,19 @@ async function startServer() {
       }
 
       // Map uploaded files to backgrounds
-      if (req.files['backgrounds']) {
+      const files = req.files || {};
+      if (files['backgrounds']) {
         let fileIndex = 0;
         for (let i = 0; i < config.backgrounds.length; i++) {
-          if (fileIndex < req.files['backgrounds'].length) {
-             config.backgrounds[i].localPath = req.files['backgrounds'][fileIndex].path;
+          if (fileIndex < files['backgrounds'].length) {
+             config.backgrounds[i].localPath = files['backgrounds'][fileIndex].path;
              fileIndex++;
           }
         }
       }
 
-      if (req.files['customFont']) {
-        config.customFontLocalPath = req.files['customFont'][0].path;
+      if (files['customFont']) {
+        config.customFontLocalPath = files['customFont'][0].path;
       }
 
       jobs[jobId] = {
@@ -195,11 +215,17 @@ async function startServer() {
       };
 
       // Start background process
+      // NOTE: On Serverless platforms like Vercel, background tasks are often killed.
+      // We log this warning to help the user understand why it might fail there.
+      if (process.env.VERCEL) {
+        console.warn("WARNING: Running on Vercel. Background tasks may be terminated before completion.");
+      }
+
       processVideo(jobId, config, jobs).catch(err => {
         console.error(`Job ${jobId} failed:`, err);
         if (jobs[jobId]) {
           jobs[jobId].status = "failed";
-          jobs[jobId].error = err.message || "Unknown error during processing";
+          jobs[jobId].error = err.message || String(err) || "Unknown error during processing";
         }
       });
 
@@ -225,11 +251,24 @@ async function startServer() {
   // Global error handler
   app.use((err: any, req: any, res: any, next: any) => {
     console.error("Unhandled Express Error:", err);
-    res.status(500).json({ 
+    const status = err.status || err.statusCode || 500;
+    
+    // Log more details for 500 errors to help debug Vercel
+    if (status === 500) {
+      console.error("CRASH DETAILS:", {
+        message: err.message,
+        stack: err.stack,
+        url: req.url,
+        method: req.method
+      });
+    }
+
+    res.status(status).json({ 
       error: {
-        code: "500",
-        message: err.message || "A server error has occurred",
-        stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+        code: status.toString(),
+        message: err.message || String(err) || "A server error has occurred",
+        stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined,
+        details: err.details || undefined
       }
     });
   });
@@ -249,9 +288,13 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  if (process.env.NODE_ENV !== "production") {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
+  
+  return app;
 }
 
 async function getAudioDuration(filePath: string): Promise<number> {
@@ -363,9 +406,15 @@ async function processVideo(jobId: string, config: any, jobs: any) {
     
     let fontFamily = "Arial";
     if (config.customFontLocalPath) {
-      const fontName = `CustomFont_${jobId}`;
-      FontLibrary.use(fontName, config.customFontLocalPath);
-      fontFamily = fontName;
+      try {
+        const fontName = `CustomFont_${jobId}`;
+        FontLibrary.use(fontName, config.customFontLocalPath);
+        fontFamily = fontName;
+        console.log(`Loaded custom font: ${fontName}`);
+      } catch (e) {
+        console.error("Failed to load custom font, falling back to Arial:", e);
+        fontFamily = "Arial";
+      }
     }
     
     for (let i = 0; i < targetVerses.length; i++) {
@@ -489,7 +538,18 @@ async function processVideo(jobId: string, config: any, jobs: any) {
   }
 }
 
-startServer().catch(err => {
+// Export the app for Vercel
+const appPromise = startServer().catch(err => {
   console.error("CRITICAL: Server failed to start:", err);
+  return null;
 });
+
+export default async (req: any, res: any) => {
+  const app = await appPromise;
+  if (!app) {
+    res.status(500).send("Server failed to start");
+    return;
+  }
+  return app(req, res);
+};
 
