@@ -5,11 +5,22 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
-import { Canvas, loadImage, FontLibrary } from "skia-canvas";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
-import { createServer as createViteServer } from "vite";
+
+// We'll import these dynamically to prevent crashes on environments where they might fail to load
+let createViteServer: any;
+
+// Helper to get skia-canvas dynamically
+async function getSkia() {
+  try {
+    return await import("skia-canvas");
+  } catch (e) {
+    console.error("Failed to import skia-canvas:", e);
+    return null;
+  }
+}
 
 // Vercel config for longer execution
 export const config = {
@@ -21,19 +32,19 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);
 
 async function startServer() {
-  console.log("Starting server...");
-  
-  // Test skia-canvas
+  console.log("Starting server initialization...");
+  console.log("Current working directory:", process.cwd());
   try {
-    const testCanvas = new Canvas(10, 10);
-    const testCtx = testCanvas.getContext("2d");
-    testCtx.fillStyle = "red";
-    testCtx.fillRect(0, 0, 10, 10);
-    console.log("skia-canvas test successful");
+    console.log("Directory contents:", fs.readdirSync(process.cwd()));
+    if (fs.existsSync(path.join(process.cwd(), 'dist'))) {
+      console.log("dist directory found. Contents:", fs.readdirSync(path.join(process.cwd(), 'dist')));
+    } else {
+      console.log("dist directory NOT found at", path.join(process.cwd(), 'dist'));
+    }
   } catch (e) {
-    console.error("skia-canvas test FAILED:", e);
+    console.error("Failed to list directory contents:", e);
   }
-
+  
   const app = express();
   const PORT = 3000;
 
@@ -81,6 +92,9 @@ async function startServer() {
 
   app.get("/api/test-canvas", async (req, res) => {
     try {
+      const skia = await getSkia();
+      if (!skia) throw new Error("skia-canvas not available");
+      const { Canvas } = skia;
       const canvas = new Canvas(400, 200);
       const ctx = canvas.getContext("2d");
       ctx.fillStyle = "white";
@@ -274,17 +288,31 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    try {
+      const viteModule = await import("vite");
+      createViteServer = viteModule.createServer;
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("Vite middleware enabled");
+    } catch (e) {
+      console.error("Failed to start Vite server:", e);
+    }
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
+    console.log("Serving static files from:", distPath);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        console.error("index.html NOT found at", indexPath);
+        res.status(404).send("Frontend build not found. Please ensure 'npm run build' was successful.");
+      }
     });
   }
 
@@ -344,6 +372,12 @@ function drawSocialBranding(ctx: any, platform: string, handle: string, w: numbe
 
 async function processVideo(jobId: string, config: any, jobs: any) {
   console.log(`Starting processVideo for job ${jobId}`);
+  const skia = await getSkia();
+  if (!skia) {
+    throw new Error("Video generation failed: skia-canvas is not supported in this environment.");
+  }
+  const { Canvas, loadImage, FontLibrary } = skia;
+
   const updateJobLocal = async (id: string, data: any) => {
     if (jobs[id]) {
       jobs[id] = { ...jobs[id], ...data, updatedAt: new Date().toISOString() };
