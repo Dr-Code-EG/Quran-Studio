@@ -58,6 +58,71 @@ const OVERLAYS = [
   { id: 'light_leaks', label: 'Light Leaks' },
 ];
 
+const FILTERS = [
+  { id: 'none', label: 'Original' },
+  { id: 'grayscale', label: 'B&W' },
+  { id: 'sepia', label: 'Sepia' },
+  { id: 'warm', label: 'Warm' },
+  { id: 'cool', label: 'Cool' },
+  { id: 'vibrant', label: 'Vibrant' },
+];
+
+const TRANSITIONS = [
+  { id: 'fade', label: 'Fade' },
+  { id: 'slide', label: 'Slide' },
+  { id: 'zoom', label: 'Zoom' },
+  { id: 'blur_fade', label: 'Blur Fade' },
+  { id: 'none', label: 'None' },
+];
+
+const TEMPLATES = [
+  { 
+    id: 'tiktok_classic', 
+    label: 'TikTok Classic', 
+    config: { 
+      aspectRatio: '9:16', 
+      fontSize: 64, 
+      fontFamily: 'Amiri', 
+      overlayType: 'dust', 
+      overlayOpacity: 0.3,
+      blurBackground: 2,
+      brightnessBackground: 80,
+      showMetadata: true,
+      transitionType: 'fade'
+    } 
+  },
+  { 
+    id: 'youtube_cinematic', 
+    label: 'YouTube Cinematic', 
+    config: { 
+      aspectRatio: '16:9', 
+      fontSize: 72, 
+      fontFamily: 'Scheherazade', 
+      overlayType: 'light_leaks', 
+      overlayOpacity: 0.4,
+      blurBackground: 5,
+      brightnessBackground: 70,
+      showMetadata: true,
+      transitionType: 'zoom'
+    } 
+  },
+  { 
+    id: 'insta_minimal', 
+    label: 'Insta Minimal', 
+    config: { 
+      aspectRatio: '1:1', 
+      fontSize: 56, 
+      fontFamily: 'Noto Sans Arabic', 
+      overlayType: 'none', 
+      overlayOpacity: 0,
+      blurBackground: 0,
+      brightnessBackground: 100,
+      showMetadata: false,
+      transitionType: 'slide'
+    } 
+  },
+];
+
 const ARABIC_FONTS = [
   { id: 'Amiri', label: 'Amiri (Traditional)' },
   { id: 'Lateef', label: 'Lateef (Soft)' },
@@ -84,10 +149,7 @@ export default function App() {
     fontSize: 48,
     fontColor: '#ffffff',
     textPosition: 'center',
-    showTranslation: true,
     translationLanguage: 'en',
-    natureSound: 'none',
-    natureVolume: 0.3,
     reciterVolume: 1.0,
     socialHandle: '@quranstudio',
     socialPlatform: 'instagram',
@@ -97,6 +159,10 @@ export default function App() {
     overlayOpacity: 0.5,
     transitionType: 'fade',
     motionEffect: false,
+    showMetadata: true,
+    showTranslation: true,
+    filter: 'none',
+    textAlign: 'center',
     backgrounds: [],
   });
 
@@ -108,13 +174,8 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
-        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`, {
-          withCredentials: true
-        });
-        setPreviewVerse({
-          text: String(res.data?.text || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"),
-          translation: String(res.data?.translation || "In the name of Allah, the Entirely Merciful, the Especially Merciful.")
-        });
+        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
+        setPreviewVerse(res.data);
       } catch (error) {
         console.error("Failed to fetch preview verse", error);
       }
@@ -123,37 +184,41 @@ export default function App() {
   }, [config.surahId, config.verseFrom]);
 
   useEffect(() => {
-    let pollInterval: NodeJS.Timeout | undefined;
+    let timeoutId: NodeJS.Timeout;
+    let isMounted = true;
 
-    if (jobStatus && jobStatus.status === 'processing' && jobStatus.id !== 'pending') {
-      pollInterval = setInterval(async () => {
-        try {
-          const res = await axios.get(`/api/job-status/${jobStatus.id}`, {
-            withCredentials: true
-          });
-          const data = res.data;
-          if (data) {
-            setJobStatus({
-              id: String(data.id || jobStatus.id),
-              status: (data.status === 'completed' || data.status === 'failed' || data.status === 'processing') ? data.status : 'processing',
-              progress: typeof data.progress === 'number' ? data.progress : 0,
-              stage: typeof data.stage === 'object' ? JSON.stringify(data.stage) : String(data.stage || 'Processing...'),
-              videoUrl: data.videoUrl ? String(data.videoUrl) : undefined,
-              error: data.error ? (typeof data.error === 'object' ? (data.error.message || JSON.stringify(data.error)) : String(data.error)) : null
-            });
-            if (data.status === 'completed' || data.status === 'failed') {
-              setGenerating(false);
-              if (pollInterval) clearInterval(pollInterval);
-            }
-          }
-        } catch (err) {
-          console.error("Error polling job status:", err);
+    const pollStatus = async () => {
+      if (!jobStatus || jobStatus.status !== 'processing' || !isMounted) return;
+
+      try {
+        const res = await axios.get(`/api/job-status/${jobStatus.id}`);
+        if (!isMounted) return;
+
+        setJobStatus(res.data);
+        
+        if (res.data.status === 'completed' || res.data.status === 'failed') {
+          setGenerating(false);
+        } else {
+          // Schedule next poll only if still processing
+          timeoutId = setTimeout(pollStatus, 5000);
         }
-      }, 2000);
+      } catch (error: any) {
+        if (!isMounted) return;
+        console.error("Failed to check job status", error);
+        
+        // If we hit rate limiting, wait longer before next poll
+        const delay = error.response?.status === 429 ? 10000 : 5000;
+        timeoutId = setTimeout(pollStatus, delay);
+      }
+    };
+
+    if (jobStatus && jobStatus.status === 'processing') {
+      timeoutId = setTimeout(pollStatus, 5000);
     }
 
     return () => {
-      if (pollInterval) clearInterval(pollInterval);
+      isMounted = false;
+      clearTimeout(timeoutId);
     };
   }, [jobStatus?.id, jobStatus?.status]);
 
@@ -216,49 +281,12 @@ export default function App() {
 
     if (customFontFile) formData.append('customFont', customFontFile);
 
-    // Set initial status to show dialog immediately
-    setJobStatus({ id: 'pending', status: 'processing', progress: 0, stage: 'Uploading Assets...' });
-
     try {
-      const res = await axios.post('/api/generate', formData, {
-        withCredentials: true,
-        headers: {
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
-      
-      // Check if response is HTML (Cookie Check)
-      if (typeof res.data === 'string' && res.data.includes('Cookie check')) {
-        throw new Error("PLATFORM_COOKIE_CHECK");
-      }
-
-      if (res.data && res.data.jobId) {
-        setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
-      } else {
-        throw new Error("Server did not return a valid Job ID. Response: " + (typeof res.data === 'object' ? JSON.stringify(res.data) : String(res.data).substring(0, 100)));
-      }
+      const res = await axios.post('/api/generate', formData);
+      setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
     } catch (err: any) {
       console.error("Generation failed", err);
-      setJobStatus(null); // Clear pending status on error
-      
-      let errorDetail = "";
-      if (err.message === "PLATFORM_COOKIE_CHECK") {
-        errorDetail = "Your browser is blocking required cookies. Please open the app in a new tab using the button in the top right, or click 'Authenticate' if you see a popup.";
-      } else if (err.response) {
-        // Check if error response is HTML
-        if (typeof err.response.data === 'string' && err.response.data.includes('Cookie check')) {
-          errorDetail = "Your browser is blocking required cookies. Please open the app in a new tab to continue.";
-        } else {
-          errorDetail = ` (Status: ${err.response.status}, Data: ${JSON.stringify(err.response.data)})`;
-        }
-      } else if (err.request) {
-        errorDetail = " (No response received from server)";
-      } else {
-        errorDetail = ` (${err.message})`;
-      }
-
-      setError(`Generation Error: ${err.message === "PLATFORM_COOKIE_CHECK" ? "Cookie Blocked" : err.message}${errorDetail}`);
-      console.error("Full error object:", err);
+      setError(err.response?.data?.error || "Failed to start video generation. Please check your server logs.");
       setGenerating(false);
     }
   };
@@ -277,6 +305,10 @@ export default function App() {
   const currentSurah = surahs.find(s => s.id === config.surahId);
   const firstBgPreview = config.backgrounds.length > 0 ? previews[config.backgrounds[0].id] : null;
 
+  const applyTemplate = (templateConfig: any) => {
+    setConfig({ ...config, ...templateConfig });
+  };
+
   return (
     <div className="min-h-screen flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
       {/* Sidebar - Configuration */}
@@ -292,6 +324,27 @@ export default function App() {
         </header>
 
         <div className="space-y-8">
+          {/* Section: Templates */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <Sparkles className="w-3 h-3" />
+              <span>Quick Templates</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2">
+              {TEMPLATES.map(template => (
+                <button
+                  key={template.id}
+                  onClick={() => applyTemplate(template.config)}
+                  className="p-3 rounded-xl border border-white/5 bg-zinc-900/50 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-all text-left group"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-zinc-300 group-hover:text-emerald-500">{template.label}</span>
+                    <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-emerald-500" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
           {/* Section: Content */}
           <section className="space-y-4">
             <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
@@ -494,6 +547,64 @@ export default function App() {
                   onChange={(e) => setConfig({ ...config, fontSize: Number(e.target.value) })}
                 />
               </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Text Alignment</label>
+                <div className="flex gap-2">
+                  {(['left', 'center', 'right'] as const).map(align => (
+                    <button
+                      key={align}
+                      onClick={() => setConfig({ ...config, textAlign: align })}
+                      className={cn(
+                        "flex-1 p-2 rounded-lg border transition-all text-xs font-medium capitalize",
+                        config.textAlign === align 
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {align}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 border border-white/5">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-zinc-300">Show Surah & Verse</label>
+                  <p className="text-[10px] text-zinc-500">Display metadata at the bottom</p>
+                </div>
+                <button 
+                  onClick={() => setConfig({ ...config, showMetadata: !config.showMetadata })}
+                  className={cn(
+                    "w-10 h-5 rounded-full transition-all relative",
+                    config.showMetadata ? "bg-emerald-500" : "bg-zinc-700"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                    config.showMetadata ? "left-6" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 border border-white/5">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-zinc-300">Show Translation</label>
+                  <p className="text-[10px] text-zinc-500">Display verse translation</p>
+                </div>
+                <button 
+                  onClick={() => setConfig({ ...config, showTranslation: !config.showTranslation })}
+                  className={cn(
+                    "w-10 h-5 rounded-full transition-all relative",
+                    config.showTranslation ? "bg-emerald-500" : "bg-zinc-700"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                    config.showTranslation ? "left-6" : "left-1"
+                  )} />
+                </button>
+              </div>
             </div>
           </section>
 
@@ -505,6 +616,46 @@ export default function App() {
             </div>
 
             <div className="grid gap-6">
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-zinc-300">Background Filter</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {FILTERS.map(f => (
+                    <button
+                      key={f.id}
+                      onClick={() => setConfig({ ...config, filter: f.id as any })}
+                      className={cn(
+                        "p-2 rounded-lg border transition-all text-[10px] font-medium",
+                        config.filter === f.id 
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-zinc-300">Transition Effect</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {TRANSITIONS.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setConfig({ ...config, transitionType: t.id as any })}
+                      className={cn(
+                        "p-2 rounded-lg border transition-all text-[10px] font-bold uppercase",
+                        config.transitionType === t.id 
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <label className="text-sm font-medium text-zinc-300">Overlay Effect</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -653,26 +804,7 @@ export default function App() {
                 <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="text-sm font-bold text-red-500">Generation Error</p>
-                  <p className="text-xs text-red-400/80 leading-relaxed">{typeof error === 'object' ? JSON.stringify(error) : String(error)}</p>
-                  <button 
-                    onClick={async () => {
-                      try {
-                        const res = await axios.get('/api/debug-info');
-                        alert(JSON.stringify(res.data, null, 2));
-                      } catch (e) {
-                        alert("Failed to fetch debug info");
-                      }
-                    }}
-                    className="mt-2 text-[10px] font-bold text-red-400 underline hover:text-red-300 mr-4"
-                  >
-                    View Server Debug Info
-                  </button>
-                  <button 
-                    onClick={() => window.open(window.location.href, '_blank')}
-                    className="mt-2 text-[10px] font-bold text-red-400 underline hover:text-red-300"
-                  >
-                    Open in New Tab
-                  </button>
+                  <p className="text-xs text-red-400/80 leading-relaxed">{error}</p>
                 </div>
               </motion.div>
             )}
@@ -796,12 +928,20 @@ export default function App() {
                     fontFamily: config.fontFamily === 'Custom' ? 'sans-serif' : config.fontFamily
                   }}
                 >
-                  {typeof previewVerse.text === 'object' ? JSON.stringify(previewVerse.text) : String(previewVerse.text)}
+                  {previewVerse.text}
                 </h3>
                 {config.showTranslation && (
                   <p className="text-white/80 text-lg font-medium max-w-md">
-                    {typeof previewVerse.translation === 'object' ? JSON.stringify(previewVerse.translation) : String(previewVerse.translation)}
+                    {previewVerse.translation}
                   </p>
+                )}
+                {config.showMetadata && (
+                  <div className="pt-4 flex flex-col items-center">
+                    <div className="h-px w-12 bg-white/20 mb-4" />
+                    <p className="text-white/60 text-sm font-bold tracking-widest uppercase">
+                      {currentSurah?.name_simple} • Verse {config.verseFrom}
+                    </p>
+                  </div>
                 )}
               </motion.div>
             </div>
@@ -830,18 +970,8 @@ export default function App() {
                 exit={{ opacity: 0, scale: 0.9 }}
                 className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm"
               >
-                <div className="w-full max-w-md glass p-8 rounded-3xl space-y-6 text-center relative">
-                  <button 
-                    onClick={() => {
-                      setJobStatus(null);
-                      setGenerating(false);
-                    }}
-                    className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors"
-                  >
-                    <Plus className="w-5 h-5 rotate-45 text-zinc-400" />
-                  </button>
-
-                  {(jobStatus.status === 'processing' || !jobStatus.status) && (
+                <div className="w-full max-w-md glass p-8 rounded-3xl space-y-6 text-center">
+                  {jobStatus.status === 'processing' && (
                     <>
                       <div className="relative w-24 h-24 mx-auto">
                         <svg className="w-full h-full" viewBox="0 0 100 100">
@@ -853,19 +983,17 @@ export default function App() {
                             fill="transparent" 
                             r="40" cx="50" cy="50"
                             initial={{ strokeDasharray: "0 251" }}
-                            animate={{ strokeDasharray: `${((jobStatus.progress || 0) / 100) * 251} 251` }}
+                            animate={{ strokeDasharray: `${(jobStatus.progress / 100) * 251} 251` }}
                           />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <span className="text-xl font-bold">{jobStatus.progress || 0}%</span>
+                          <span className="text-xl font-bold">{jobStatus.progress}%</span>
                         </div>
                       </div>
                       <div className="space-y-4">
                         <div className="space-y-1">
                           <h3 className="text-xl font-bold">Rendering Video</h3>
-                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">
-                            {typeof jobStatus.stage === 'object' ? JSON.stringify(jobStatus.stage) : String(jobStatus.stage || 'Processing...')}
-                          </p>
+                          <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">{jobStatus.stage}</p>
                         </div>
                         
                         {/* Detailed Progress Bar */}
@@ -873,7 +1001,7 @@ export default function App() {
                           <motion.div 
                             className="h-full bg-emerald-500"
                             initial={{ width: 0 }}
-                            animate={{ width: `${jobStatus.progress || 0}%` }}
+                            animate={{ width: `${jobStatus.progress}%` }}
                           />
                         </div>
                         
@@ -922,7 +1050,7 @@ export default function App() {
                       </div>
                       <div className="space-y-2">
                         <h3 className="text-xl font-bold">Generation Failed</h3>
-                        <p className="text-zinc-400 text-sm">{typeof jobStatus.error === 'object' ? JSON.stringify(jobStatus.error) : (jobStatus.error || "An unexpected error occurred during processing.")}</p>
+                        <p className="text-zinc-400 text-sm">{jobStatus.error || "An unexpected error occurred during processing."}</p>
                       </div>
                       <button 
                         onClick={() => setJobStatus(null)}
@@ -931,13 +1059,6 @@ export default function App() {
                         Try Again
                       </button>
                     </>
-                  )}
-
-                  {jobStatus.status && !['processing', 'completed', 'failed'].includes(jobStatus.status) && (
-                    <div className="py-12 space-y-4">
-                      <Loader2 className="w-12 h-12 animate-spin mx-auto text-emerald-500" />
-                      <p className="text-zinc-400">Synchronizing status...</p>
-                    </div>
                   )}
                 </div>
               </motion.div>

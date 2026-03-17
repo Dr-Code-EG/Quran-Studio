@@ -144,15 +144,15 @@ export const SURAHS: Surah[] = [
 
 export const RECITERS: Reciter[] = [
   { id: 7, reciter_name: "مشاري راشد العفاسي", style: "Murattal", translated_name: { language_name: "arabic", name: "مشاري راشد العفاسي" } },
-  { id: 3, reciter_name: "عبد الباسط عبد الصمد", style: "Murattal", translated_name: { language_name: "arabic", name: "عبد الباسط عبد الصمد" } },
-  { id: 1, reciter_name: "عبد الرحمن السديس", style: "Murattal", translated_name: { language_name: "arabic", name: "عبد الرحمن السديس" } },
+  { id: 1, reciter_name: "عبد الباسط عبد الصمد", style: "Murattal", translated_name: { language_name: "arabic", name: "عبد الباسط عبد الصمد" } },
   { id: 2, reciter_name: "عبد الباسط عبد الصمد", style: "Mujawwad", translated_name: { language_name: "arabic", name: "عبد الباسط عبد الصمد" } },
+  { id: 3, reciter_name: "عبد الرحمن السديس", style: "Murattal", translated_name: { language_name: "arabic", name: "عبد الرحمن السديس" } },
   { id: 4, reciter_name: "محمود خليل الحصري", style: "Murattal", translated_name: { language_name: "arabic", name: "محمود خليل الحصري" } },
   { id: 5, reciter_name: "محمد صديق المنشاوي", style: "Murattal", translated_name: { language_name: "arabic", name: "محمد صديق المنشاوي" } },
   { id: 6, reciter_name: "ماهر المعيقلي", style: "Murattal", translated_name: { language_name: "arabic", name: "ماهر المعيقلي" } },
+  { id: 12, reciter_name: "ياسر الدوسري", style: "Murattal", translated_name: { language_name: "arabic", name: "ياسر الدوسري" } },
   { id: 8, reciter_name: "سعد الغامدي", style: "Murattal", translated_name: { language_name: "arabic", name: "سعد الغامدي" } },
   { id: 9, reciter_name: "أحمد بن علي العجمي", style: "Murattal", translated_name: { language_name: "arabic", name: "أحمد بن علي العجمي" } },
   { id: 10, reciter_name: "سعود الشريم", style: "Murattal", translated_name: { language_name: "arabic", name: "سعود الشريم" } },
-  { id: 11, reciter_name: "محمد أيوب", style: "Murattal", translated_name: { language_name: "arabic", name: "محمد أيوب" } },
-  { id: 12, reciter_name: "ياسر الدوسري", style: "Murattal", translated_name: { language_name: "arabic", name: "ياسر الدوسري" } }
+  { id: 11, reciter_name: "محمد أيوب", style: "Murattal", translated_name: { language_name: "arabic", name: "محمد أيوب" } }
 ];

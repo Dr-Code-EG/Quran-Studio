@@ -44,10 +44,7 @@ export interface VideoConfig {
   fontSize: number;
   fontColor: string;
   textPosition: 'top' | 'center' | 'bottom';
-  showTranslation: boolean;
   translationLanguage: string;
-  natureSound: string;
-  natureVolume: number;
   reciterVolume: number;
   socialHandle: string;
   socialPlatform: string;
@@ -55,8 +52,12 @@ export interface VideoConfig {
   brightnessBackground: number;
   overlayType: 'none' | 'dust' | 'bokeh' | 'light_leaks';
   overlayOpacity: number;
-  transitionType: 'fade' | 'slide' | 'zoom' | 'none';
+  transitionType: 'fade' | 'slide' | 'zoom' | 'blur_fade' | 'none';
   motionEffect: boolean;
+  showMetadata: boolean;
+  showTranslation: boolean;
+  filter: 'none' | 'grayscale' | 'sepia' | 'warm' | 'cool' | 'vibrant';
+  textAlign: 'left' | 'center' | 'right';
   backgrounds: BackgroundConfig[];
 }
 
