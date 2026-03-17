@@ -55,7 +55,26 @@ try {
     )
   `);
 } catch (dbErr: any) {
-  console.error("Database initialization failed:", dbErr);
+  console.error("Database initialization failed. This is expected on some serverless environments like Vercel if native modules fail to load:", dbErr);
+  // Fallback to in-memory if possible or handle gracefully
+  try {
+    db = new Database(":memory:");
+    console.log("Using in-memory database as fallback");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        progress INTEGER,
+        stage TEXT,
+        config TEXT,
+        video_url TEXT,
+        error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (memErr) {
+    console.error("In-memory database fallback also failed");
+  }
 }
 
 app.use(cors());
@@ -686,14 +705,25 @@ if (process.env.NODE_ENV !== "production" && !isVercel) {
     });
   }
   startDevServer();
-} else if (!isVercel) {
-  app.use(express.static(path.join(process.cwd(), "dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(process.cwd(), "dist", "index.html"));
-  });
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+} else {
+  // Production or Vercel
+  const distPath = path.join(process.cwd(), "dist");
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get("*", (req, res, next) => {
+      // If it's an API route, don't serve index.html
+      if (req.path.startsWith('/api') || req.path.startsWith('/output') || req.path.startsWith('/uploads')) {
+        return next();
+      }
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+
+  if (!isVercel) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }
 }
 
 export default app;
