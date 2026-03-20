@@ -33,7 +33,6 @@ export interface BackgroundConfig {
 }
 
 export interface VideoConfig {
-  userId?: string;
   surahId: number;
   verseFrom: number;
   verseTo: number;
@@ -45,7 +44,11 @@ export interface VideoConfig {
   fontSize: number;
   fontColor: string;
   textPosition: 'top' | 'center' | 'bottom';
-  translationLanguage: string;
+  showTranslation: boolean;
+  translationLanguages: string[];
+  reverbEffect: boolean;
+  natureSound: string;
+  natureVolume: number;
   reciterVolume: number;
   socialHandle: string;
   socialPlatform: string;
@@ -56,9 +59,6 @@ export interface VideoConfig {
   transitionType: 'fade' | 'slide' | 'zoom' | 'blur_fade' | 'none';
   motionEffect: boolean;
   showMetadata: boolean;
-  showTranslation: boolean;
-  filter: 'none' | 'grayscale' | 'sepia' | 'warm' | 'cool' | 'vibrant';
-  textAlign: 'left' | 'center' | 'right';
   backgrounds: BackgroundConfig[];
 }
 

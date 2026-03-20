@@ -29,30 +29,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import * as reshaperModule from 'arabic-reshaper';
-
-const reshapeText = (text: string) => {
-  try {
-    const reshaper = (reshaperModule as any).default || reshaperModule;
-    if (reshaper && typeof reshaper.convertArabic === 'function') {
-      return reshaper.convertArabic(text);
-    }
-    const reshapeFn = reshaper.reshape || (typeof reshaper === 'function' ? reshaper : null);
-    if (typeof reshapeFn === 'function') {
-      return reshapeFn(text);
-    }
-    return text;
-  } catch (e) {
-    console.error('Error reshaping text', e);
-    return text;
-  }
-};
-
-const reverseText = (text: string) => {
-  return text.split('').reverse().join('');
-};
 import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
 import { SURAHS, RECITERS } from './constants/quranData';
 
@@ -82,6 +58,62 @@ const OVERLAYS = [
   { id: 'light_leaks', label: 'Light Leaks' },
 ];
 
+const TRANSITIONS = [
+  { id: 'fade', label: 'Fade' },
+  { id: 'slide', label: 'Slide' },
+  { id: 'zoom', label: 'Zoom' },
+  { id: 'blur_fade', label: 'Blur Fade' },
+  { id: 'none', label: 'None' },
+];
+
+const TEMPLATES = [
+  { 
+    id: 'tiktok_classic', 
+    label: 'TikTok Classic', 
+    config: { 
+      aspectRatio: '9:16', 
+      fontSize: 64, 
+      fontFamily: 'Amiri', 
+      overlayType: 'dust', 
+      overlayOpacity: 0.3,
+      blurBackground: 2,
+      brightnessBackground: 80,
+      showMetadata: true,
+      transitionType: 'fade'
+    } 
+  },
+  { 
+    id: 'youtube_cinematic', 
+    label: 'YouTube Cinematic', 
+    config: { 
+      aspectRatio: '16:9', 
+      fontSize: 72, 
+      fontFamily: 'Scheherazade', 
+      overlayType: 'light_leaks', 
+      overlayOpacity: 0.4,
+      blurBackground: 5,
+      brightnessBackground: 70,
+      showMetadata: true,
+      transitionType: 'zoom'
+    } 
+  },
+  { 
+    id: 'insta_minimal', 
+    label: 'Insta Minimal', 
+    config: { 
+      aspectRatio: '1:1', 
+      fontSize: 56, 
+      fontFamily: 'Noto Sans Arabic', 
+      overlayType: 'none', 
+      overlayOpacity: 0,
+      blurBackground: 0,
+      brightnessBackground: 100,
+      showMetadata: false,
+      transitionType: 'slide'
+    } 
+  },
+];
+
 const ARABIC_FONTS = [
   { id: 'Amiri', label: 'Amiri (Traditional)' },
   { id: 'Lateef', label: 'Lateef (Soft)' },
@@ -96,312 +128,7 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
-  const [ffmpegLoading, setFfmpegLoading] = useState(false);
-  const ffmpegRef = useRef(new FFmpeg());
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    loadFFmpeg();
-  }, []);
-
-  const loadFFmpeg = async () => {
-    if (ffmpegLoading) return;
-    setFfmpegLoading(true);
-    try {
-      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-      const ffmpeg = ffmpegRef.current;
-      
-      ffmpeg.on('log', ({ message }) => {
-        console.log('FFmpeg Log:', message);
-      });
-
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
-      setFfmpegLoaded(true);
-    } catch (err) {
-      console.error('Failed to load FFmpeg:', err);
-      setError('Failed to load video processing engine. Please refresh.');
-    } finally {
-      setFfmpegLoading(false);
-    }
-  };
-
-  const generateVideo = async () => {
-    if (!ffmpegLoaded) {
-      setError('Video engine is still loading. Please wait a moment.');
-      return;
-    }
-
-    setGenerating(true);
-    setError(null);
-    setJobStatus({
-      id: 'client-side',
-      status: 'processing',
-      progress: 0,
-      stage: 'Initializing...',
-    });
-
-    try {
-      const ffmpeg = ffmpegRef.current;
-      console.log('Starting video generation with config:', config);
-      
-      // 1. Fetch verse data
-      setJobStatus(prev => prev ? { ...prev, stage: 'Fetching verses...' } : null);
-      console.log('Fetching verses from API...');
-      const versesResponse = await axios.get(`/api/verse-preview`, {
-        params: {
-          surahId: config.surahId,
-          verseFrom: config.verseFrom,
-          verseTo: config.verseTo,
-          reciterId: config.reciterId,
-        }
-      });
-      
-      if (versesResponse.data.error) {
-        throw new Error(versesResponse.data.error);
-      }
-      
-      const verses = Array.isArray(versesResponse.data) ? versesResponse.data : [versesResponse.data];
-      console.log(`Fetched ${verses.length} verses`);
-      if (verses.length === 0 || !verses[0].text) {
-        throw new Error('No verses found for the selected range.');
-      }
-
-      // 2. Prepare Canvas
-      const canvas = canvasRef.current;
-      if (!canvas) throw new Error('Canvas not found');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Canvas context not found');
-
-      const [width, height] = config.aspectRatio === '9:16' ? [1080, 1920] : 
-                            config.aspectRatio === '1:1' ? [1080, 1080] : [1920, 1080];
-      canvas.width = width;
-      canvas.height = height;
-      console.log(`Canvas initialized: ${width}x${height}`);
-
-      // 3. Pre-fetch all audio files in parallel
-      setJobStatus(prev => prev ? { ...prev, stage: 'Downloading audio files...' } : null);
-      console.log('Pre-fetching audio files...');
-      const audioDataMap: { [key: number]: Uint8Array } = {};
-      await Promise.all(verses.map(async (verse: any, i: number) => {
-        if (verse.audioUrl) {
-          try {
-            console.log(`Fetching audio for verse ${i + 1}: ${verse.audioUrl}`);
-            const data = await fetchFile(verse.audioUrl);
-            audioDataMap[i] = data;
-          } catch (e) {
-            console.warn(`Failed to fetch audio for verse ${i + 1}`, e);
-          }
-        }
-      }));
-
-      // 4. Process each verse
-      const audioFiles: string[] = [];
-      const frameFiles: string[] = [];
-
-      console.log('Processing verses into frames...');
-      for (let i = 0; i < verses.length; i++) {
-        const verse = verses[i];
-        const progress = Math.round(((i + 1) / verses.length) * 60);
-        setJobStatus(prev => prev ? { ...prev, progress, stage: `Processing verse ${i + 1}/${verses.length}` } : null);
-
-        // Write audio to FFmpeg
-        if (audioDataMap[i]) {
-          const audioName = `audio_${i}.mp3`;
-          await ffmpeg.writeFile(audioName, audioDataMap[i]);
-          audioFiles.push(audioName);
-        }
-
-        // Render frame
-        ctx.clearRect(0, 0, width, height);
-        
-        // Background
-        const verseNum = parseInt(verse.verse_key.split(':')[1]);
-        const bgConfig = config.backgrounds.find(b => verseNum >= b.verseFrom && verseNum <= b.verseTo) || config.backgrounds[0];
-        
-        if (bgConfig && bgConfig.fileUrl) {
-          try {
-            const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-              const img = new Image();
-              img.crossOrigin = 'anonymous';
-              img.onload = () => resolve(img);
-              img.onerror = reject;
-              img.src = bgConfig.fileUrl!;
-            });
-            
-            // Draw image cover
-            const imgRatio = img.width / img.height;
-            const canvasRatio = width / height;
-            let sx, sy, sw, sh;
-            if (imgRatio > canvasRatio) {
-              sw = img.height * canvasRatio;
-              sh = img.height;
-              sx = (img.width - sw) / 2;
-              sy = 0;
-            } else {
-              sw = img.width;
-              sh = img.width / canvasRatio;
-              sx = 0;
-              sy = (img.height - sh) / 2;
-            }
-            ctx.drawImage(img, sx, sy, sw, sh, 0, 0, width, height);
-            
-            // Apply blur/brightness if needed (simplified for client-side)
-            if (config.blurBackground > 0 || config.brightnessBackground < 100) {
-              ctx.fillStyle = `rgba(0,0,0,${(100 - config.brightnessBackground) / 100})`;
-              ctx.fillRect(0, 0, width, height);
-            }
-          } catch (e) {
-            console.warn('Failed to load background image, using fallback', e);
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(0, 0, width, height);
-          }
-        } else {
-          ctx.fillStyle = '#1a1a1a';
-          ctx.fillRect(0, 0, width, height);
-        }
-
-        // Overlay
-        if (config.overlayType !== 'none') {
-          ctx.globalAlpha = config.overlayOpacity;
-          ctx.fillStyle = config.overlayType === 'dust' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)';
-          ctx.fillRect(0, 0, width, height);
-          ctx.globalAlpha = 1.0;
-        }
-
-        // Text rendering
-        ctx.fillStyle = config.fontColor;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        
-        // Arabic text
-        const reshaped = reshapeText(verse.text);
-        const reversed = reverseText(reshaped);
-        
-        ctx.font = `bold ${config.fontSize * 1.2}px "Amiri", Arial`;
-        const arabicY = height / 2 - 40;
-        
-        // Add text shadow for better readability
-        ctx.shadowColor = 'rgba(0,0,0,0.8)';
-        ctx.shadowBlur = 15;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 4;
-        
-        ctx.fillText(reversed, width / 2, arabicY);
-        
-        // Reset shadow for translation
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetY = 0;
-        
-        // Translation text
-        if (config.showTranslation) {
-          ctx.font = `${config.fontSize * 0.6}px Arial`;
-          const transY = height / 2 + 60;
-          // Simple word wrap for translation
-          const translationText = verse.translation || '';
-          const words = translationText.split(' ');
-          let line = '';
-          let y = transY;
-          for (const word of words) {
-            const testLine = line + word + ' ';
-            const metrics = ctx.measureText(testLine);
-            if (metrics.width > width * 0.8) {
-              ctx.fillText(line, width / 2, y);
-              line = word + ' ';
-              y += config.fontSize * 0.8;
-            } else {
-              line = testLine;
-            }
-          }
-          ctx.fillText(line, width / 2, y);
-        }
-
-        // Social Branding
-        if (config.socialHandle) {
-          ctx.font = '24px Arial';
-          ctx.globalAlpha = 0.6;
-          ctx.fillText(config.socialHandle, width / 2, height - 100);
-          ctx.globalAlpha = 1.0;
-        }
-
-        // Save frame
-        const frameName = `frame_${i}.png`;
-        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
-        if (!blob) throw new Error(`Failed to create frame blob for verse ${i + 1}`);
-        const frameData = await fetchFile(blob);
-        await ffmpeg.writeFile(frameName, frameData);
-        frameFiles.push(frameName);
-      }
-
-      // 4. Combine into video
-      if (frameFiles.length === 0) {
-        throw new Error('No frames were generated. Please check your configuration.');
-      }
-      
-      console.log(`Combining ${frameFiles.length} frames and ${audioFiles.length} audio files...`);
-      setJobStatus(prev => prev ? { ...prev, progress: 80, stage: 'Generating final video...' } : null);
-      
-      // Concat audio
-      let audioInput: string[] = [];
-      if (audioFiles.length > 0) {
-        console.log('Concatenating audio files...');
-        const audioList = audioFiles.map(f => `file '${f}'`).join('\n');
-        await ffmpeg.writeFile('audio_list.txt', audioList);
-        await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'audio_list.txt', 'output_audio.mp3']);
-        audioInput = ['-i', 'output_audio.mp3'];
-      } else {
-        console.warn('No audio files found, generating silent video');
-      }
-
-      // Concat frames with duration
-      console.log('Preparing frame list for concatenation...');
-      let frameList = frameFiles.map(f => `file '${f}'\nduration 5`).join('\n');
-      if (frameFiles.length > 0) {
-        frameList += `\nfile '${frameFiles[frameFiles.length - 1]}'`;
-      }
-      await ffmpeg.writeFile('frame_list.txt', frameList);
-      
-      console.log('Running final FFmpeg command...');
-      const ffmpegArgs = [
-        '-f', 'concat', '-safe', '0', '-i', 'frame_list.txt',
-        ...audioInput,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
-      ];
-      
-      if (audioInput.length > 0) {
-        ffmpegArgs.push('-c:a', 'aac', '-shortest');
-      }
-      
-      ffmpegArgs.push('output.mp4');
-      
-      await ffmpeg.exec(ffmpegArgs);
-      console.log('FFmpeg command finished');
-
-      const data = await ffmpeg.readFile('output.mp4');
-      console.log(`Video generated successfully, size: ${(data as Uint8Array).length} bytes`);
-      const videoUrl = URL.createObjectURL(new Blob([(data as Uint8Array).buffer], { type: 'video/mp4' }));
-
-      setJobStatus({
-        id: 'client-side',
-        status: 'completed',
-        progress: 100,
-        stage: 'Generation complete!',
-        videoUrl,
-      });
-
-    } catch (err: any) {
-      console.error('Video generation failed:', err);
-      const errorMessage = err.response?.data?.error || err.message || 'Failed to generate video. Please try again.';
-      setError(errorMessage);
-      setJobStatus(prev => prev ? { ...prev, status: 'failed', error: errorMessage } : null);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
+  
   const [config, setConfig] = useState<VideoConfig>({
     surahId: 1,
     verseFrom: 1,
@@ -414,7 +141,8 @@ export default function App() {
     fontColor: '#ffffff',
     textPosition: 'center',
     showTranslation: true,
-    translationLanguage: 'en',
+    translationLanguages: ['en'],
+    reverbEffect: true,
     natureSound: 'none',
     natureVolume: 0.3,
     reciterVolume: 1.0,
@@ -425,43 +153,66 @@ export default function App() {
     overlayType: 'none',
     overlayOpacity: 0.5,
     transitionType: 'fade',
-    motionEffect: true,
+    motionEffect: false,
+    showMetadata: true,
     backgrounds: [],
   });
 
   const [customFontFile, setCustomFontFile] = useState<File | null>(null);
   const [bgFiles, setBgFiles] = useState<Record<string, File>>({});
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [generatingAiBg, setGeneratingAiBg] = useState<Record<string, boolean>>({});
   const [previewVerse, setPreviewVerse] = useState({ text: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', translation: 'In the name of Allah, the Entirely Merciful, the Especially Merciful.' });
 
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
-        const res = await axios.get(`/api/verse-preview`, {
-          params: {
-            surahId: config.surahId,
-            verseFrom: config.verseFrom,
-            verseTo: config.verseFrom // Only fetch the current verse for preview
-          }
-        });
-        const data = Array.isArray(res.data) ? res.data[0] : res.data;
-        if (data && data.text) {
-          const reshaped = reshapeText(data.text);
-          const reversed = reverseText(reshaped);
-          setPreviewVerse({ text: reversed, translation: data.translation });
-        }
-      } catch (error: any) {
+        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
+        setPreviewVerse(res.data);
+      } catch (error) {
         console.error("Failed to fetch preview verse", error);
-        if (error.response) {
-          console.error("Error response data:", error.response.data);
-        }
       }
     }, 500);
     return () => clearTimeout(timer);
   }, [config.surahId, config.verseFrom]);
 
   useEffect(() => {
-    // Client-side generation doesn't need polling
+    let timeoutId: NodeJS.Timeout;
+    let isMounted = true;
+
+    const pollStatus = async () => {
+      if (!jobStatus || jobStatus.status !== 'processing' || !isMounted) return;
+
+      try {
+        const res = await axios.get(`/api/job-status/${jobStatus.id}`);
+        if (!isMounted) return;
+
+        setJobStatus(res.data);
+        
+        if (res.data.status === 'completed' || res.data.status === 'failed') {
+          setGenerating(false);
+        } else {
+          // Schedule next poll only if still processing
+          timeoutId = setTimeout(pollStatus, 5000);
+        }
+      } catch (error: any) {
+        if (!isMounted) return;
+        console.error("Failed to check job status", error);
+        
+        // If we hit rate limiting, wait longer before next poll
+        const delay = error.response?.status === 429 ? 10000 : 5000;
+        timeoutId = setTimeout(pollStatus, delay);
+      }
+    };
+
+    if (jobStatus && jobStatus.status === 'processing') {
+      timeoutId = setTimeout(pollStatus, 5000);
+    }
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
   }, [jobStatus?.id, jobStatus?.status]);
 
   const addBackground = () => {
@@ -506,8 +257,56 @@ export default function App() {
     }
   };
 
+  const handleGenerateAiBg = async (id: string, verseFrom: number, verseTo: number) => {
+    setGeneratingAiBg(prev => ({ ...prev, [id]: true }));
+    try {
+      const res = await axios.post('/api/generate-ai-bg', {
+        surahId: config.surahId,
+        verseFrom,
+        verseTo,
+        aspectRatio: config.aspectRatio
+      });
+      
+      const imageUrl = res.data.imageUrl;
+      setPreviews(prev => ({ ...prev, [id]: imageUrl }));
+      
+      const newBgs = config.backgrounds.map(bg => 
+        bg.id === id ? { ...bg, fileUrl: imageUrl } : bg
+      );
+      setConfig({ ...config, backgrounds: newBgs });
+    } catch (err) {
+      console.error("AI BG generation failed", err);
+      alert("Failed to generate AI background. Make sure Gemini API key is set.");
+    } finally {
+      setGeneratingAiBg(prev => ({ ...prev, [id]: false }));
+    }
+  };
+
   const handleGenerate = async () => {
-    generateVideo();
+    setGenerating(true);
+    setJobStatus(null);
+    setError(null);
+    
+    const formData = new FormData();
+    formData.append('config', JSON.stringify(config));
+    
+    // Append backgrounds in order
+    config.backgrounds.forEach((bg, index) => {
+      if (bgFiles[bg.id]) {
+        formData.append('backgrounds', bgFiles[bg.id]);
+      }
+    });
+
+    if (customFontFile) formData.append('customFont', customFontFile);
+
+    try {
+      const res = await axios.post('/api/generate', formData);
+      setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
+    } catch (err: any) {
+      console.error("Generation failed", err);
+      setError(err.response?.data?.error || "Failed to start video generation. Please check your server logs.");
+      setGenerating(false);
+    }
   };
 
   if (loading) {
@@ -524,26 +323,46 @@ export default function App() {
   const currentSurah = surahs.find(s => s.id === config.surahId);
   const firstBgPreview = config.backgrounds.length > 0 ? previews[config.backgrounds[0].id] : null;
 
+  const applyTemplate = (templateConfig: any) => {
+    setConfig({ ...config, ...templateConfig });
+  };
+
   return (
     <div className="min-h-screen flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
-      {/* Hidden Canvas for Video Generation */}
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
-
       {/* Sidebar - Configuration */}
       <div className="w-full lg:w-[450px] h-screen overflow-y-auto border-r border-white/5 bg-[#0a0a0a] p-6 custom-scrollbar">
-        <header className="mb-10">
-          <div className="flex items-center gap-4 mb-3">
-            <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+        <header className="mb-8">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-emerald-500/10 rounded-lg">
               <Sparkles className="w-6 h-6 text-emerald-500" />
             </div>
-            <div>
-              <h1 className="text-3xl font-display font-bold tracking-tight text-white">Quran Studio</h1>
-              <p className="text-zinc-500 text-[10px] uppercase tracking-[0.2em] font-bold">Professional Video Editor</p>
-            </div>
+            <h1 className="text-2xl font-bold tracking-tight">Quran Studio</h1>
           </div>
+          <p className="text-zinc-500 text-sm">Professional Quranic Video Creator</p>
         </header>
 
         <div className="space-y-8">
+          {/* Section: Templates */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <Sparkles className="w-3 h-3" />
+              <span>Quick Templates</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2">
+              {TEMPLATES.map(template => (
+                <button
+                  key={template.id}
+                  onClick={() => applyTemplate(template.config)}
+                  className="p-3 rounded-xl border border-white/5 bg-zinc-900/50 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-all text-left group"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-zinc-300 group-hover:text-emerald-500">{template.label}</span>
+                    <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-emerald-500" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
           {/* Section: Content */}
           <section className="space-y-4">
             <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
@@ -617,13 +436,13 @@ export default function App() {
           {/* Section: Multi-Background */}
           <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-zinc-400 text-[10px] font-bold uppercase tracking-[0.15em]">
+              <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
                 <Layers className="w-3 h-3" />
                 <span>Background Segments</span>
               </div>
               <button 
                 onClick={addBackground}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-all border border-emerald-500/20"
+                className="flex items-center gap-1 px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all"
               >
                 <Plus className="w-3 h-3" />
                 Add Segment
@@ -651,7 +470,7 @@ export default function App() {
                       className="aspect-square rounded-xl border border-dashed border-white/10 hover:border-emerald-500/50 transition-all cursor-pointer overflow-hidden flex items-center justify-center relative bg-black/20"
                     >
                       {previews[bg.id] ? (
-                        <img src={previews[bg.id]} className="absolute inset-0 w-full h-full object-cover" />
+                        <img src={previews[bg.id].startsWith('data:') ? previews[bg.id] : previews[bg.id]} className="absolute inset-0 w-full h-full object-cover" />
                       ) : (
                         <Upload className="w-4 h-4 text-zinc-600" />
                       )}
@@ -687,9 +506,14 @@ export default function App() {
                           />
                         </div>
                       </div>
-                      <p className="text-[10px] text-zinc-600 italic">
-                        This background will be active from verse {bg.verseFrom} to {bg.verseTo}.
-                      </p>
+                      <button 
+                        onClick={() => handleGenerateAiBg(bg.id, bg.verseFrom, bg.verseTo)}
+                        disabled={generatingAiBg[bg.id]}
+                        className="w-full py-1.5 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {generatingAiBg[bg.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        Generate AI Background
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -703,6 +527,63 @@ export default function App() {
             </div>
           </section>
 
+          {/* Section: Audio Effects */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <Music className="w-3 h-3" />
+              <span>Audio Atmosphere</span>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 border border-white/5">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-zinc-300">Reverb Effect</label>
+                  <p className="text-[10px] text-zinc-500">Spiritual echo effect</p>
+                </div>
+                <button 
+                  onClick={() => setConfig({ ...config, reverbEffect: !config.reverbEffect })}
+                  className={cn(
+                    "w-10 h-5 rounded-full transition-all relative",
+                    config.reverbEffect ? "bg-emerald-500" : "bg-zinc-700"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                    config.reverbEffect ? "left-6" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Nature Background</label>
+                <select 
+                  className="w-full bg-zinc-900 border border-white/10 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  value={config.natureSound}
+                  onChange={(e) => setConfig({ ...config, natureSound: e.target.value })}
+                >
+                  <option value="none">None</option>
+                  <option value="rain">Rain</option>
+                  <option value="sea">Sea Waves</option>
+                  <option value="birds">Forest Birds</option>
+                  <option value="night">Night Ambience</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-zinc-300">Nature Volume</label>
+                  <span className="text-xs text-zinc-500">{Math.round(config.natureVolume * 100)}%</span>
+                </div>
+                <input 
+                  type="range" min="0" max="1" step="0.05"
+                  className="w-full accent-emerald-500"
+                  value={config.natureVolume}
+                  onChange={(e) => setConfig({ ...config, natureVolume: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+          </section>
+
           {/* Section: Advanced Typography */}
           <section className="space-y-4">
             <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
@@ -711,6 +592,36 @@ export default function App() {
             </div>
 
             <div className="grid gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-300">Translations</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'en', label: 'English' },
+                    { id: 'fr', label: 'French' },
+                    { id: 'id', label: 'Indonesian' },
+                    { id: 'tr', label: 'Turkish' },
+                  ].map(lang => (
+                    <button
+                      key={lang.id}
+                      onClick={() => {
+                        const langs = config.translationLanguages.includes(lang.id)
+                          ? config.translationLanguages.filter(l => l !== lang.id)
+                          : [...config.translationLanguages, lang.id];
+                        setConfig({ ...config, translationLanguages: langs });
+                      }}
+                      className={cn(
+                        "p-2 rounded-lg border transition-all text-[10px] font-bold",
+                        config.translationLanguages.includes(lang.id)
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {lang.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="text-sm font-medium text-zinc-300">Arabic Font</label>
                 <select 
@@ -746,6 +657,25 @@ export default function App() {
                   onChange={(e) => setConfig({ ...config, fontSize: Number(e.target.value) })}
                 />
               </div>
+
+              <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 border border-white/5">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-zinc-300">Show Surah & Verse</label>
+                  <p className="text-[10px] text-zinc-500">Display metadata at the bottom</p>
+                </div>
+                <button 
+                  onClick={() => setConfig({ ...config, showMetadata: !config.showMetadata })}
+                  className={cn(
+                    "w-10 h-5 rounded-full transition-all relative",
+                    config.showMetadata ? "bg-emerald-500" : "bg-zinc-700"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                    config.showMetadata ? "left-6" : "left-1"
+                  )} />
+                </button>
+              </div>
             </div>
           </section>
 
@@ -757,6 +687,45 @@ export default function App() {
             </div>
 
             <div className="grid gap-6">
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-zinc-300">Transition Effect</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {TRANSITIONS.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setConfig({ ...config, transitionType: t.id as any })}
+                      className={cn(
+                        "p-2 rounded-lg border transition-all text-[10px] font-bold uppercase",
+                        config.transitionType === t.id 
+                          ? "bg-emerald-500/10 border-emerald-500 text-emerald-500" 
+                          : "bg-zinc-900 border-white/5 text-zinc-500 hover:border-white/20"
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-xl bg-zinc-900 border border-white/5">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-zinc-300">Motion Effect (Ken Burns)</label>
+                  <p className="text-[10px] text-zinc-500">Slow zoom/pan animation</p>
+                </div>
+                <button 
+                  onClick={() => setConfig({ ...config, motionEffect: !config.motionEffect })}
+                  className={cn(
+                    "w-10 h-5 rounded-full transition-all relative",
+                    config.motionEffect ? "bg-emerald-500" : "bg-zinc-700"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                    config.motionEffect ? "left-6" : "left-1"
+                  )} />
+                </button>
+              </div>
+
               <div className="space-y-3">
                 <label className="text-sm font-medium text-zinc-300">Overlay Effect</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -931,7 +900,7 @@ export default function App() {
       </div>
 
       {/* Main Preview Area */}
-      <main className="flex-1 h-screen flex flex-col items-center justify-center p-8 lg:p-12 bg-[#050505] relative overflow-hidden">
+      <main className="flex-1 h-screen flex flex-col items-center justify-center p-8 bg-[#050505] relative overflow-hidden">
         {/* Background Decorative Elements */}
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-20">
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/20 blur-[120px] rounded-full" />
@@ -941,12 +910,12 @@ export default function App() {
         <div className="w-full max-w-4xl flex flex-col items-center gap-8 relative z-10">
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-4">
-              <div className="p-2.5 bg-zinc-900/50 backdrop-blur-xl border border-white/10 rounded-xl">
-                <Eye className="w-5 h-5 text-emerald-500" />
+              <div className="p-2 glass rounded-lg">
+                <Eye className="w-5 h-5 text-zinc-400" />
               </div>
               <div>
-                <h2 className="text-xl font-display font-bold text-white">Studio Preview</h2>
-                <p className="text-xs text-zinc-500 font-medium">Real-time visualization of your configuration</p>
+                <h2 className="text-lg font-bold">Studio Preview</h2>
+                <p className="text-xs text-zinc-500">Real-time visualization of your configuration</p>
               </div>
             </div>
             
@@ -955,7 +924,7 @@ export default function App() {
                 <a 
                   href={jobStatus.videoUrl} 
                   download 
-                  className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all shadow-xl shadow-white/5"
+                  className="flex items-center gap-2 px-4 py-2 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all"
                 >
                   <Download className="w-4 h-4" />
                   Download Video
@@ -964,93 +933,150 @@ export default function App() {
             </div>
           </div>
 
-          {/* Video Mock Preview */}
+          {/* Preview Container */}
           <div className={cn(
-            "relative rounded-[2.5rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] border border-white/5 transition-all duration-700",
-            config.aspectRatio === '9:16' ? 'h-[75vh] aspect-[9/16]' : 
-            config.aspectRatio === '1:1' ? 'w-[60vh] aspect-square' : 'w-full aspect-[16/9]'
+            "relative bg-zinc-900 rounded-3xl overflow-hidden shadow-2xl border border-white/5",
+            config.aspectRatio === '9:16' ? 'w-[300px] aspect-[9/16]' : config.aspectRatio === '16:9' ? 'w-full aspect-[16/9]' : 'w-[400px] aspect-square'
           )}>
             {/* Background */}
-            <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
+            <div className="absolute inset-0">
               {firstBgPreview ? (
-                <img 
+                <motion.img 
+                  key={firstBgPreview}
+                  initial={{ scale: 1 }}
+                  animate={config.motionEffect ? { scale: 1.2 } : { scale: 1 }}
+                  transition={{ duration: 10, repeat: Infinity, repeatType: 'reverse', ease: 'linear' }}
                   src={firstBgPreview} 
-                  className="w-full h-full object-cover transition-all duration-700" 
+                  className="w-full h-full object-cover"
                   style={{ 
-                    filter: `blur(${config.blurBackground}px) brightness(${config.brightnessBackground}%)` 
+                    filter: `blur(${config.blurBackground}px) brightness(${config.brightnessBackground}%)`,
                   }}
                 />
               ) : (
-                <div className="w-full h-full bg-gradient-to-br from-zinc-800 to-zinc-950 flex items-center justify-center">
-                  <Sparkles className="w-12 h-12 text-white/5" />
+                <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
+                  <Video className="w-12 h-12 text-zinc-700" />
                 </div>
               )}
-              
-              {/* Overlay Effects */}
-              {config.overlayType !== 'none' && (
-                <div 
-                  className={cn(
-                    "absolute inset-0 pointer-events-none transition-opacity duration-500",
-                    config.overlayType === 'dust' && 'bg-[url("https://www.transparenttextures.com/patterns/stardust.png")]',
-                    config.overlayType === 'bokeh' && 'bg-gradient-to-tr from-yellow-500/20 via-transparent to-purple-500/20',
-                    config.overlayType === 'light_leaks' && 'bg-gradient-to-r from-orange-500/10 via-transparent to-blue-500/10'
-                  )}
-                  style={{ opacity: config.overlayOpacity }}
-                />
-              )}
-
-              {/* Overlay for readability */}
+              {/* Overlay */}
+              <div className={cn(
+                "absolute inset-0 pointer-events-none",
+                config.overlayType === 'dust' && "bg-[radial-gradient(circle,white_1px,transparent_1px)] bg-[length:20px_20px] opacity-20",
+                config.overlayType === 'bokeh' && "bg-[radial-gradient(circle,rgba(255,255,200,0.2)_0%,transparent_70%)] opacity-30",
+                config.overlayType === 'light_leaks' && "bg-gradient-to-r from-orange-500/20 via-transparent to-blue-500/10"
+              )} />
               <div className="absolute inset-0 bg-black/40" />
             </div>
 
-            {/* Content Preview */}
-            <div className={cn(
-              "absolute inset-0 p-12 flex flex-col justify-center items-center text-center",
-              config.textPosition === 'top' && 'justify-start pt-20',
-              config.textPosition === 'bottom' && 'justify-end pb-20',
-            )}>
-              <motion.div 
+            {/* Text Overlay */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+              <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                key={config.surahId}
+                key={previewVerse.text}
                 className="space-y-6"
               >
-                <h3 
-                  className="font-amiri leading-relaxed transition-all duration-500"
+                <div 
+                  className="flex flex-wrap justify-center gap-x-3 gap-y-2 leading-relaxed"
                   style={{ 
-                    fontSize: `${config.fontSize}px`, 
-                    color: config.fontColor,
-                    fontFamily: config.fontFamily === 'Custom' ? 'sans-serif' : config.fontFamily,
-                    textShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                    fontFamily: config.fontFamily === 'Custom' ? 'Arial' : config.fontFamily,
+                    fontSize: `${config.fontSize * (config.aspectRatio === '16:9' ? 1 : 0.7)}px`,
+                    direction: 'rtl'
                   }}
-                  dir="rtl"
                 >
-                  {previewVerse.text}
-                </h3>
+                  {previewVerse.text.split(" ").map((word, i) => (
+                    <motion.span
+                      key={i}
+                      animate={{ 
+                        color: config.fontColor,
+                        scale: [1, 1.1, 1],
+                        textShadow: [
+                          "0 0 0px transparent",
+                          "0 0 20px rgba(255,255,255,0.5)",
+                          "0 0 0px transparent"
+                        ]
+                      }}
+                      transition={{ 
+                        duration: 2, 
+                        delay: i * 0.4, 
+                        repeat: Infinity, 
+                        repeatDelay: (previewVerse.text.split(" ").length - 1) * 0.4 
+                      }}
+                    >
+                      {word}
+                    </motion.span>
+                  ))}
+                </div>
+                
                 {config.showTranslation && (
-                  <p className="text-white/80 text-lg font-medium max-w-md">
-                    {previewVerse.translation}
-                  </p>
+                  <div className="space-y-1">
+                    {config.translationLanguages.map(lang => (
+                      <p key={lang} className="text-zinc-300 italic text-sm max-w-xs mx-auto">
+                        [{lang.toUpperCase()}] {previewVerse.translation}
+                      </p>
+                    ))}
+                  </div>
                 )}
               </motion.div>
             </div>
 
-            {/* Branding */}
-            <div className="absolute bottom-8 left-0 w-full flex justify-center">
-              <div className="glass px-4 py-2 rounded-full flex items-center gap-2">
-                {config.socialPlatform === 'instagram' && <Instagram className="w-3 h-3" />}
-                {config.socialPlatform === 'youtube' && <Youtube className="w-3 h-3" />}
-                <span className="text-[10px] font-bold tracking-wider uppercase">{config.socialHandle}</span>
+            {/* Social Branding */}
+            {config.socialHandle && (
+              <div className="absolute bottom-12 left-0 w-full flex justify-center">
+                <div className="px-4 py-2 bg-black/60 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
+                  {config.socialPlatform === 'instagram' && <Instagram className="w-3 h-3" />}
+                  {config.socialPlatform === 'tiktok' && <Music className="w-3 h-3" />}
+                  {config.socialPlatform === 'youtube' && <Youtube className="w-3 h-3" />}
+                  {config.socialPlatform === 'facebook' && <Facebook className="w-3 h-3" />}
+                  <span className="text-[10px] font-bold">{config.socialHandle}</span>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Progress Bar Mock */}
-            <div className="absolute bottom-0 left-0 w-full h-1 bg-white/10">
-              <div className="h-full bg-emerald-500 w-1/3" />
-            </div>
+            {/* Metadata */}
+            {config.showMetadata && currentSurah && (
+              <div className="absolute bottom-6 left-0 w-full text-center">
+                <div className="w-8 h-[1px] bg-white/20 mx-auto mb-2" />
+                <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                  {currentSurah.name_simple} • Verse {config.verseFrom}
+                </p>
+              </div>
+            )}
           </div>
 
-          {/* Job Status Overlay */}
+          {/* Job Status Banner */}
+          <AnimatePresence>
+            {jobStatus && jobStatus.status === 'processing' && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="w-full bg-zinc-900/80 backdrop-blur-xl border border-emerald-500/20 rounded-2xl p-6 overflow-hidden"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-500/20 rounded-lg">
+                      <Loader2 className="w-4 h-4 text-emerald-500 animate-spin" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">{jobStatus.stage}</p>
+                      <p className="text-[10px] text-zinc-500">Processing your high-quality video...</p>
+                    </div>
+                  </div>
+                  <span className="text-lg font-black text-emerald-500">{jobStatus.progress}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <motion.div 
+                    className="h-full bg-emerald-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${jobStatus.progress}%` }}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Job Status Overlay */}
           <AnimatePresence>
             {jobStatus && (
               <motion.div 
@@ -1153,7 +1179,6 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
-        </div>
       </main>
     </div>
   );
