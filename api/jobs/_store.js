@@ -1,4 +1,5 @@
-const jobs = new Map()
+// Global variable to persist across serverless function invocations (within the same instance)
+let jobs = new Map()
 
 export function createJob(params) {
   const id = `job_${Date.now()}`

@@ -37,7 +37,7 @@ export default function JobDetailPage() {
         status: apiJob.status,
         progress: apiJob.progress,
         progressMessage: apiJob.progressMessage,
-        videoUrl: apiJob.videoUrl || `https://download.quran.com/videos/${id}.mp4` // Mock URL for demo if not provided
+        videoUrl: apiJob.videoUrl
       })
     }
   }, [apiJob, id, updateJob])
