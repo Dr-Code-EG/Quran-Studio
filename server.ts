@@ -33,9 +33,7 @@ app.get("/api/verse-preview", async (req, res) => {
   console.log(`Verse preview request: Surah ${sId}, From ${vFrom}, To ${vTo}, Reciter ${rId}`);
   
   try {
-    // Fetch verses for the chapter. We fetch a large enough page to cover the range.
-    // Most chapters are small, but for large ones like Al-Baqarah, we might need to adjust.
-    // per_page: 300 should cover almost all chapters in one go.
+    // Fetch verses for the chapter using from and to parameters for efficiency
     const url = `https://api.quran.com/api/v4/verses/by_chapter/${sId}`;
     const response = await axios.get(url, {
       params: {
@@ -43,24 +41,16 @@ app.get("/api/verse-preview", async (req, res) => {
         words: false,
         translations: 131, // Dr. Mustafa Khattab, the Clear Quran
         fields: "text_uthmani",
-        per_page: 300 
+        from: vFrom,
+        to: vTo,
+        per_page: 50 // API usually caps at 50, but we only need the requested range
       }
     });
 
-    if (!response.data.verses) {
+    const verses = response.data.verses;
+    if (!verses || verses.length === 0) {
       console.error("No verses found in Quran API response:", response.data);
-      return res.status(404).json({ error: "No verses found for this chapter" });
-    }
-
-    // Filter verses by the requested range
-    const allVerses = response.data.verses;
-    const verses = allVerses.filter((v: any) => {
-      const vNum = parseInt(v.verse_key.split(':')[1]);
-      return vNum >= vFrom && vNum <= vTo;
-    });
-
-    if (verses.length === 0) {
-      return res.status(404).json({ error: `No verses found in range ${vFrom}-${vTo}` });
+      return res.status(404).json({ error: `No verses found for Surah ${sId} in range ${vFrom}-${vTo}` });
     }
 
     // Fetch audio files for the chapter

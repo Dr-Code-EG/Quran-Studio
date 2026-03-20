@@ -351,7 +351,7 @@ export default function App() {
 
     } catch (err: any) {
       console.error('Video generation failed:', err);
-      const errorMessage = err.message || 'Failed to generate video. Please try again.';
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to generate video. Please try again.';
       setError(errorMessage);
       setJobStatus(prev => prev ? { ...prev, status: 'failed', error: errorMessage } : null);
     } finally {
