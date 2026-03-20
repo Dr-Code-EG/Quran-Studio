@@ -20,37 +20,57 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/verse-preview", async (req, res) => {
   const { surahId, verseFrom, verseTo, reciterId } = req.query;
+  
+  if (!surahId) {
+    return res.status(400).json({ error: "surahId is required" });
+  }
+
+  const sId = parseInt(surahId as string);
+  const vFrom = parseInt(verseFrom as string) || 1;
+  const vTo = parseInt(verseTo as string) || vFrom;
+  const rId = reciterId || 7;
+
+  console.log(`Verse preview request: Surah ${sId}, From ${vFrom}, To ${vTo}, Reciter ${rId}`);
+  
   try {
-    // Fetch verses with text and translations
-    // We use the verses/by_chapter endpoint which is quite powerful
-    const response = await axios.get(`https://api.quran.com/api/v4/verses/by_chapter/${surahId}`, {
+    // Fetch verses for the chapter. We fetch a large enough page to cover the range.
+    // Most chapters are small, but for large ones like Al-Baqarah, we might need to adjust.
+    // per_page: 300 should cover almost all chapters in one go.
+    const url = `https://api.quran.com/api/v4/verses/by_chapter/${sId}`;
+    const response = await axios.get(url, {
       params: {
         language: "en",
         words: false,
         translations: 131, // Dr. Mustafa Khattab, the Clear Quran
         fields: "text_uthmani",
-        from: verseFrom || 1,
-        to: verseTo || verseFrom || 1,
-        per_page: 50 // Limit to 50 verses for safety
+        per_page: 300 
       }
     });
 
-    const verses = response.data.verses;
+    if (!response.data.verses) {
+      console.error("No verses found in Quran API response:", response.data);
+      return res.status(404).json({ error: "No verses found for this chapter" });
+    }
 
-    // Fetch audio files for these verses
-    // The reciterId from our constants might need mapping, but let's try it directly first
-    // If it's not provided, default to Mishary Rashid Alafasy (7)
-    const rId = reciterId || 7;
-    const audioResponse = await axios.get(`https://api.quran.com/api/v4/recitations/${rId}/by_chapter/${surahId}`, {
-      params: {
-        from: verseFrom || 1,
-        to: verseTo || verseFrom || 1
-      }
+    // Filter verses by the requested range
+    const allVerses = response.data.verses;
+    const verses = allVerses.filter((v: any) => {
+      const vNum = parseInt(v.verse_key.split(':')[1]);
+      return vNum >= vFrom && vNum <= vTo;
     });
-    const audioFiles = audioResponse.data.audio_files;
 
-    const result = verses.map((v: any, index: number) => {
-      const audio = audioFiles.find((a: any) => a.verse_key === v.verse_key);
+    if (verses.length === 0) {
+      return res.status(404).json({ error: `No verses found in range ${vFrom}-${vTo}` });
+    }
+
+    // Fetch audio files for the chapter
+    const audioUrl = `https://api.quran.com/api/v4/recitations/${rId}/by_chapter/${sId}`;
+    const audioResponse = await axios.get(audioUrl);
+    
+    const allAudioFiles = audioResponse.data.audio_files || [];
+    
+    const result = verses.map((v: any) => {
+      const audio = allAudioFiles.find((a: any) => a.verse_key === v.verse_key);
       return {
         verse_key: v.verse_key,
         text: v.text_uthmani,
@@ -62,7 +82,11 @@ app.get("/api/verse-preview", async (req, res) => {
     res.json(result);
   } catch (error: any) {
     console.error("Error fetching verses:", error.message);
-    res.status(500).json({ error: "Failed to fetch verses" });
+    if (error.response) {
+      console.error("API Response Error:", error.response.status, error.response.data);
+      return res.status(error.response.status).json({ error: `Quran API Error: ${error.response.status}` });
+    }
+    res.status(500).json({ error: "Failed to fetch verses: " + error.message });
   }
 });
 

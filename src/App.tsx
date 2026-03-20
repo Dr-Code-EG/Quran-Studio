@@ -117,9 +117,11 @@ export default function App() {
 
     try {
       const ffmpeg = ffmpegRef.current;
+      console.log('Starting video generation with config:', config);
       
       // 1. Fetch verse data
       setJobStatus(prev => prev ? { ...prev, stage: 'Fetching verses...' } : null);
+      console.log('Fetching verses from API...');
       const versesResponse = await axios.get(`/api/verse-preview`, {
         params: {
           surahId: config.surahId,
@@ -128,7 +130,16 @@ export default function App() {
           reciterId: config.reciterId,
         }
       });
+      
+      if (versesResponse.data.error) {
+        throw new Error(versesResponse.data.error);
+      }
+      
       const verses = Array.isArray(versesResponse.data) ? versesResponse.data : [versesResponse.data];
+      console.log(`Fetched ${verses.length} verses`);
+      if (verses.length === 0 || !verses[0].text) {
+        throw new Error('No verses found for the selected range.');
+      }
 
       // 2. Prepare Canvas
       const canvas = canvasRef.current;
@@ -140,13 +151,16 @@ export default function App() {
                             config.aspectRatio === '1:1' ? [1080, 1080] : [1920, 1080];
       canvas.width = width;
       canvas.height = height;
+      console.log(`Canvas initialized: ${width}x${height}`);
 
       // 3. Pre-fetch all audio files in parallel
       setJobStatus(prev => prev ? { ...prev, stage: 'Downloading audio files...' } : null);
+      console.log('Pre-fetching audio files...');
       const audioDataMap: { [key: number]: Uint8Array } = {};
       await Promise.all(verses.map(async (verse: any, i: number) => {
         if (verse.audioUrl) {
           try {
+            console.log(`Fetching audio for verse ${i + 1}: ${verse.audioUrl}`);
             const data = await fetchFile(verse.audioUrl);
             audioDataMap[i] = data;
           } catch (e) {
@@ -159,6 +173,7 @@ export default function App() {
       const audioFiles: string[] = [];
       const frameFiles: string[] = [];
 
+      console.log('Processing verses into frames...');
       for (let i = 0; i < verses.length; i++) {
         const verse = verses[i];
         const progress = Math.round(((i + 1) / verses.length) * 60);
@@ -175,8 +190,58 @@ export default function App() {
         ctx.clearRect(0, 0, width, height);
         
         // Background
-        ctx.fillStyle = '#1a1a1a'; // Default dark background
-        ctx.fillRect(0, 0, width, height);
+        const verseNum = parseInt(verse.verse_key.split(':')[1]);
+        const bgConfig = config.backgrounds.find(b => verseNum >= b.verseFrom && verseNum <= b.verseTo) || config.backgrounds[0];
+        
+        if (bgConfig && bgConfig.fileUrl) {
+          try {
+            const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.onload = () => resolve(img);
+              img.onerror = reject;
+              img.src = bgConfig.fileUrl!;
+            });
+            
+            // Draw image cover
+            const imgRatio = img.width / img.height;
+            const canvasRatio = width / height;
+            let sx, sy, sw, sh;
+            if (imgRatio > canvasRatio) {
+              sw = img.height * canvasRatio;
+              sh = img.height;
+              sx = (img.width - sw) / 2;
+              sy = 0;
+            } else {
+              sw = img.width;
+              sh = img.width / canvasRatio;
+              sx = 0;
+              sy = (img.height - sh) / 2;
+            }
+            ctx.drawImage(img, sx, sy, sw, sh, 0, 0, width, height);
+            
+            // Apply blur/brightness if needed (simplified for client-side)
+            if (config.blurBackground > 0 || config.brightnessBackground < 100) {
+              ctx.fillStyle = `rgba(0,0,0,${(100 - config.brightnessBackground) / 100})`;
+              ctx.fillRect(0, 0, width, height);
+            }
+          } catch (e) {
+            console.warn('Failed to load background image, using fallback', e);
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, width, height);
+          }
+        } else {
+          ctx.fillStyle = '#1a1a1a';
+          ctx.fillRect(0, 0, width, height);
+        }
+
+        // Overlay
+        if (config.overlayType !== 'none') {
+          ctx.globalAlpha = config.overlayOpacity;
+          ctx.fillStyle = config.overlayType === 'dust' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)';
+          ctx.fillRect(0, 0, width, height);
+          ctx.globalAlpha = 1.0;
+        }
 
         // Text rendering
         ctx.fillStyle = config.fontColor;
@@ -221,36 +286,59 @@ export default function App() {
 
         // Save frame
         const frameName = `frame_${i}.png`;
-        const frameData = await fetchFile(canvas.toDataURL('image/png'));
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error(`Failed to create frame blob for verse ${i + 1}`);
+        const frameData = await fetchFile(blob);
         await ffmpeg.writeFile(frameName, frameData);
         frameFiles.push(frameName);
       }
 
       // 4. Combine into video
+      if (frameFiles.length === 0) {
+        throw new Error('No frames were generated. Please check your configuration.');
+      }
+      
+      console.log(`Combining ${frameFiles.length} frames and ${audioFiles.length} audio files...`);
       setJobStatus(prev => prev ? { ...prev, progress: 80, stage: 'Generating final video...' } : null);
       
       // Concat audio
-      const audioList = audioFiles.map(f => `file '${f}'`).join('\n');
-      await ffmpeg.writeFile('audio_list.txt', audioList);
-      await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'audio_list.txt', '-c', 'copy', 'output_audio.mp3']);
+      let audioInput: string[] = [];
+      if (audioFiles.length > 0) {
+        console.log('Concatenating audio files...');
+        const audioList = audioFiles.map(f => `file '${f}'`).join('\n');
+        await ffmpeg.writeFile('audio_list.txt', audioList);
+        await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'audio_list.txt', 'output_audio.mp3']);
+        audioInput = ['-i', 'output_audio.mp3'];
+      } else {
+        console.warn('No audio files found, generating silent video');
+      }
 
       // Concat frames with duration
-      // Note: In a real app, we'd get the actual audio duration. 
-      // For this prototype, we'll assume 5s per verse or try to match audio.
+      console.log('Preparing frame list for concatenation...');
       let frameList = frameFiles.map(f => `file '${f}'\nduration 5`).join('\n');
-      // Add the last frame again to ensure the last duration is respected
       if (frameFiles.length > 0) {
         frameList += `\nfile '${frameFiles[frameFiles.length - 1]}'`;
       }
       await ffmpeg.writeFile('frame_list.txt', frameList);
       
-      await ffmpeg.exec([
+      console.log('Running final FFmpeg command...');
+      const ffmpegArgs = [
         '-f', 'concat', '-safe', '0', '-i', 'frame_list.txt',
-        '-i', 'output_audio.mp3',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4'
-      ]);
+        ...audioInput,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+      ];
+      
+      if (audioInput.length > 0) {
+        ffmpegArgs.push('-c:a', 'aac', '-shortest');
+      }
+      
+      ffmpegArgs.push('output.mp4');
+      
+      await ffmpeg.exec(ffmpegArgs);
+      console.log('FFmpeg command finished');
 
       const data = await ffmpeg.readFile('output.mp4');
+      console.log(`Video generated successfully, size: ${(data as Uint8Array).length} bytes`);
       const videoUrl = URL.createObjectURL(new Blob([(data as Uint8Array).buffer], { type: 'video/mp4' }));
 
       setJobStatus({
@@ -263,8 +351,9 @@ export default function App() {
 
     } catch (err: any) {
       console.error('Video generation failed:', err);
-      setError(err.message || 'Failed to generate video. Please try again.');
-      setJobStatus(prev => prev ? { ...prev, status: 'failed' } : null);
+      const errorMessage = err.message || 'Failed to generate video. Please try again.';
+      setError(errorMessage);
+      setJobStatus(prev => prev ? { ...prev, status: 'failed', error: errorMessage } : null);
     } finally {
       setGenerating(false);
     }
