@@ -33,31 +33,69 @@ app.get("/api/verse-preview", async (req, res) => {
   console.log(`Verse preview request: Surah ${sId}, From ${vFrom}, To ${vTo}, Reciter ${rId}`);
   
   try {
-    // Fetch verses for the chapter using from and to parameters for efficiency
-    const url = `https://api.quran.com/api/v4/verses/by_chapter/${sId}`;
-    const response = await axios.get(url, {
-      params: {
-        language: "en",
-        words: false,
-        translations: 131, // Dr. Mustafa Khattab, the Clear Quran
-        fields: "text_uthmani",
-        from: vFrom,
-        to: vTo,
-        per_page: 50 // API usually caps at 50, but we only need the requested range
-      }
+    const perPage = 50;
+    const startPage = Math.floor((vFrom - 1) / perPage) + 1;
+    const endPage = Math.floor((vTo - 1) / perPage) + 1;
+
+    console.log(`Fetching pages ${startPage} to ${endPage} for Surah ${sId}`);
+
+    // Fetch verses for the chapter across necessary pages
+    const verseUrl = `https://api.quran.com/api/v4/verses/by_chapter/${sId}`;
+    const versePromises = [];
+    for (let p = startPage; p <= endPage; p++) {
+      versePromises.push(axios.get(verseUrl, {
+        params: {
+          language: "en",
+          words: false,
+          translations: 131,
+          fields: "text_uthmani",
+          page: p,
+          per_page: perPage
+        }
+      }));
+    }
+
+    const verseResponses = await Promise.all(versePromises);
+    let allVerses: any[] = [];
+    verseResponses.forEach((r, idx) => {
+      const pageVerses = r.data.verses || [];
+      console.log(`Page ${startPage + idx} returned ${pageVerses.length} verses`);
+      allVerses = allVerses.concat(pageVerses);
     });
 
-    const verses = response.data.verses;
-    if (!verses || verses.length === 0) {
-      console.error("No verses found in Quran API response:", response.data);
+    // Filter verses by the requested range
+    const verses = allVerses.filter((v: any) => {
+      const vNum = parseInt(v.verse_key.split(':')[1]);
+      return vNum >= vFrom && vNum <= vTo;
+    });
+
+    if (verses.length === 0) {
+      console.error(`No verses found in range ${vFrom}-${vTo} for Surah ${sId}. Total fetched from ${verseResponses.length} pages: ${allVerses.length}`);
+      if (allVerses.length > 0) {
+        console.log(`First verse fetched: ${allVerses[0].verse_key}, Last verse fetched: ${allVerses[allVerses.length - 1].verse_key}`);
+      }
       return res.status(404).json({ error: `No verses found for Surah ${sId} in range ${vFrom}-${vTo}` });
     }
 
-    // Fetch audio files for the chapter
+    // Fetch audio files for the chapter across necessary pages
     const audioUrl = `https://api.quran.com/api/v4/recitations/${rId}/by_chapter/${sId}`;
-    const audioResponse = await axios.get(audioUrl);
-    
-    const allAudioFiles = audioResponse.data.audio_files || [];
+    const audioPromises = [];
+    for (let p = startPage; p <= endPage; p++) {
+      audioPromises.push(axios.get(audioUrl, {
+        params: {
+          page: p,
+          per_page: perPage
+        }
+      }));
+    }
+
+    const audioResponses = await Promise.all(audioPromises);
+    let allAudioFiles: any[] = [];
+    audioResponses.forEach(r => {
+      if (r.data.audio_files) {
+        allAudioFiles = allAudioFiles.concat(r.data.audio_files);
+      }
+    });
     
     const result = verses.map((v: any) => {
       const audio = allAudioFiles.find((a: any) => a.verse_key === v.verse_key);
