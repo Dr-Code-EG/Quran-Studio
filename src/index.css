@@ -1,33 +1,73 @@
-@import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  --font-amiri: "Amiri", serif;
-  --font-display: "Playfair Display", serif;
+:root {
+  --color-gold: #C8993A;
+  --color-gold-light: #E8B84D;
+  --color-deep-blue: #0A0E1A;
+  --color-card: #1A2338;
+  --color-surface: #131929;
+  --color-border: #252D45;
+  --color-text-primary: #F0E6CC;
+  --color-text-secondary: #9BA3BC;
+  --color-text-muted: #5C6582;
 }
 
-body {
-  @apply bg-[#0a0a0a] text-white font-sans antialiased;
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-.glass {
-  @apply bg-white/5 backdrop-blur-xl border border-white/10;
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  background-color: var(--color-deep-blue);
+  color: var(--color-text-primary);
+  font-family: 'Inter', sans-serif;
+  direction: ltr;
 }
 
-.gradient-text {
-  @apply bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-cyan-400;
+.font-arabic {
+  font-family: 'Amiri', serif;
+  direction: rtl;
 }
 
-/* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
-  @apply bg-transparent;
+  background: var(--color-surface);
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  background: var(--color-border);
+  border-radius: 2px;
 }
 
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  cursor: pointer;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
