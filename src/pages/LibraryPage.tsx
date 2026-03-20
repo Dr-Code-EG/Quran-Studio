@@ -1,47 +1,28 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Film, Trash2, ExternalLink, Plus, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react'
-
-interface Job {
-  id: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
-  progress: number
-  progressMessage: string
-  surahId: number
-  fromVerse: number
-  toVerse: number
-  settings: { aspectRatio: string }
-  createdAt: string
-}
+import { Film, Trash2, ExternalLink, Plus, CheckCircle, XCircle, Clock, Loader2, Download } from 'lucide-react'
+import { useStudio } from '../context/StudioContext'
 
 const SURAH_NAMES: Record<number, string> = {
   1: 'Al-Fatiha', 2: 'Al-Baqarah', 3: "Ali 'Imran", 4: "An-Nisa", 5: "Al-Ma'idah",
   36: 'Ya-Sin', 55: 'Ar-Rahman', 67: 'Al-Mulk', 112: 'Al-Ikhlas', 114: 'An-Nas',
 }
 
-async function fetchJobs() {
-  const res = await fetch('/api/jobs')
-  if (!res.ok) throw new Error('Failed')
-  return res.json() as Promise<{ jobs: Job[] }>
-}
-
-async function deleteJob(id: string) {
-  await fetch(`/api/jobs/${id}`, { method: 'DELETE' })
-}
-
 export default function LibraryPage() {
   const navigate = useNavigate()
-  const qc = useQueryClient()
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['jobs'],
-    queryFn: fetchJobs,
-    refetchInterval: 5000,
-  })
+  const { jobs, deleteJob } = useStudio()
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this job?')) return
-    await deleteJob(id)
-    qc.invalidateQueries({ queryKey: ['jobs'] })
+  const handleDelete = (id: string) => {
+    if (!confirm('Delete this job from your local history?')) return
+    deleteJob(id)
+  }
+
+  const handleDownload = (url?: string) => {
+    if (url) {
+      window.open(url, '_blank')
+    } else {
+      alert('Video URL not available.')
+    }
   }
 
   return (
@@ -49,22 +30,12 @@ export default function LibraryPage() {
       <div className="px-5 pt-6 pb-3 flex items-center justify-between flex-shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight">Library</h1>
-          <p className="text-xs text-text-muted mt-0.5">Your generated videos</p>
+          <p className="text-xs text-text-muted mt-0.5">Your generated videos (Stored locally)</p>
         </div>
-        <button
-          onClick={() => refetch()}
-          className="text-xs text-gold border border-gold/30 rounded-lg px-3 py-1.5 hover:bg-gold/10 transition-colors"
-        >
-          Refresh
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={32} className="text-gold animate-spin" />
-          </div>
-        ) : !data?.jobs.length ? (
+        {!jobs.length ? (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
             <Film size={56} className="text-text-muted" />
             <h2 className="text-xl font-semibold text-text-primary">No Videos Yet</h2>
@@ -80,7 +51,7 @@ export default function LibraryPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {data.jobs.map(job => {
+            {jobs.map(job => {
               const surahName = SURAH_NAMES[job.surahId] || `Surah ${job.surahId}`
               const statusColor = {
                 pending: 'text-text-muted',
@@ -123,12 +94,23 @@ export default function LibraryPage() {
                   <div className="flex flex-col gap-2 flex-shrink-0">
                     <button
                       onClick={() => navigate(`/job/${job.id}`)}
+                      title="View Details"
                       className="w-8 h-8 bg-surface border border-border-blue rounded-lg flex items-center justify-center text-gold hover:bg-gold/10 transition-colors"
                     >
                       <ExternalLink size={14} />
                     </button>
+                    {job.status === 'completed' && (
+                      <button
+                        onClick={() => handleDownload(job.videoUrl)}
+                        title="Download Video"
+                        className="w-8 h-8 bg-surface border border-border-blue rounded-lg flex items-center justify-center text-green-400 hover:bg-green-400/10 transition-colors"
+                      >
+                        <Download size={14} />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(job.id)}
+                      title="Delete"
                       className="w-8 h-8 bg-surface border border-border-blue rounded-lg flex items-center justify-center text-red-400 hover:bg-red-400/10 transition-colors"
                     >
                       <Trash2 size={14} />

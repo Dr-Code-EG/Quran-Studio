@@ -42,7 +42,7 @@ async function fetchReciters() {
 
 export default function StudioPage() {
   const navigate = useNavigate()
-  const { config, updateSettings } = useStudio()
+  const { config, updateSettings, addJob } = useStudio()
   const [generating, setGenerating] = useState(false)
 
   const { data: surahsData } = useQuery({ queryKey: ['surahs'], queryFn: fetchSurahs })
@@ -67,8 +67,18 @@ export default function StudioPage() {
         }),
       })
       if (!res.ok) throw new Error('Failed')
-      const job = await res.json() as { id: string }
-      navigate(`/job/${job.id}`)
+      const jobData = await res.json() as any
+      addJob({
+        ...jobData,
+        surahId: config.surahId,
+        fromVerse: config.fromVerse,
+        toVerse: config.toVerse,
+        reciterId: config.reciterId,
+        translationId: config.translationId,
+        settings: config.settings,
+        createdAt: new Date().toISOString()
+      })
+      navigate(`/job/${jobData.id}`)
     } catch {
       alert('Failed to create job. Please try again.')
     } finally {

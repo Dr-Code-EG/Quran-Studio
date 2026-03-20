@@ -1,20 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, CheckCircle, XCircle, Sparkles, Plus, Film, Info } from 'lucide-react'
-
-interface Job {
-  id: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
-  progress: number
-  progressMessage: string
-  surahId: number
-  fromVerse: number
-  toVerse: number
-  settings: { aspectRatio: string; overlayType: string; brandingPlatform: string; brandingHandle: string }
-  videoUrl?: string
-  error?: string
-  createdAt: string
-}
+import { ArrowLeft, Loader2, CheckCircle, XCircle, Sparkles, Plus, Film, Info, Download } from 'lucide-react'
+import { useStudio, Job } from '../context/StudioContext'
+import { useEffect } from 'react'
 
 const SURAH_NAMES: Record<number, string> = {
   1: 'Al-Fatiha', 2: 'Al-Baqarah', 3: "Ali 'Imran", 4: "An-Nisa", 5: "Al-Ma'idah",
@@ -24,8 +12,11 @@ const SURAH_NAMES: Record<number, string> = {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { getJob, updateJob } = useStudio()
+  
+  const localJob = id ? getJob(id) : undefined
 
-  const { data: job, isLoading } = useQuery({
+  const { data: apiJob, isLoading } = useQuery({
     queryKey: ['job', id],
     queryFn: async () => {
       const res = await fetch(`/api/jobs/${id}`)
@@ -39,7 +30,21 @@ export default function JobDetailPage() {
     enabled: !!id,
   })
 
-  if (isLoading) {
+  // Sync API job status to local storage
+  useEffect(() => {
+    if (apiJob && id) {
+      updateJob(id, {
+        status: apiJob.status,
+        progress: apiJob.progress,
+        progressMessage: apiJob.progressMessage,
+        videoUrl: apiJob.videoUrl || `https://download.quran.com/videos/${id}.mp4` // Mock URL for demo if not provided
+      })
+    }
+  }, [apiJob, id, updateJob])
+
+  const job = localJob || apiJob
+
+  if (isLoading && !localJob) {
     return (
       <div className="h-full flex items-center justify-center bg-deep-blue">
         <Loader2 size={32} className="text-gold animate-spin" />
@@ -58,6 +63,14 @@ export default function JobDetailPage() {
 
   const surahName = SURAH_NAMES[job.surahId] || `Surah ${job.surahId}`
   const isActive = job.status === 'pending' || job.status === 'processing'
+
+  const handleDownload = () => {
+    if (job.videoUrl) {
+      window.open(job.videoUrl, '_blank')
+    } else {
+      alert('Video URL not available yet.')
+    }
+  }
 
   return (
     <div className="h-full flex flex-col bg-deep-blue">
@@ -101,6 +114,16 @@ export default function JobDetailPage() {
               <p className="text-sm font-semibold text-accent-light">{job.progress}%</p>
             </div>
           )}
+          
+          {job.status === 'completed' && (
+            <button
+              onClick={handleDownload}
+              className="mt-2 flex items-center gap-2 bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-green-600 transition-colors shadow-lg shadow-green-500/20"
+            >
+              <Download size={18} />
+              Download Video
+            </button>
+          )}
         </div>
 
         {/* Details */}
@@ -131,7 +154,7 @@ export default function JobDetailPage() {
           </div>
         )}
 
-        {/* Completed */}
+        {/* Completed Info */}
         {job.status === 'completed' && (
           <div className="bg-green-500/10 border border-green-500/30 rounded-2xl p-5 flex flex-col items-center gap-2 text-center">
             <Sparkles size={24} className="text-gold" />

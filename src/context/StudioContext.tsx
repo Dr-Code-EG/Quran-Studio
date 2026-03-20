@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import React, { createContext, useCallback, useContext, useState } from 'react'
 
 export interface VideoSettings {
   aspectRatio: '9:16' | '16:9' | '1:1'
@@ -22,6 +22,22 @@ export interface StudioConfig {
   reciterName: string
   translationId: string
   settings: VideoSettings
+}
+
+export interface Job {
+  id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  progress: number
+  progressMessage: string
+  surahId: number
+  fromVerse: number
+  toVerse: number
+  reciterId: number
+  translationId: string
+  settings: VideoSettings
+  videoUrl?: string
+  error?: string
+  createdAt: string
 }
 
 const DEFAULT: StudioConfig = {
@@ -48,14 +64,19 @@ const DEFAULT: StudioConfig = {
 
 interface Ctx {
   config: StudioConfig
+  jobs: Job[]
   updateConfig: (p: Partial<StudioConfig>) => void
   updateSettings: (p: Partial<VideoSettings>) => void
   resetConfig: () => void
+  addJob: (job: Job) => void
+  updateJob: (id: string, updates: Partial<Job>) => void
+  deleteJob: (id: string) => void
+  getJob: (id: string) => Job | undefined
 }
 
 const StudioContext = createContext<Ctx | null>(null)
 
-function loadStored(): StudioConfig {
+function loadStoredConfig(): StudioConfig {
   try {
     const s = localStorage.getItem('studio_config')
     if (s) return JSON.parse(s) as StudioConfig
@@ -63,21 +84,34 @@ function loadStored(): StudioConfig {
   return DEFAULT
 }
 
-export function StudioProvider({ children }: { children: React.ReactNode }) {
-  const [config, setConfig] = useState<StudioConfig>(loadStored)
+function loadStoredJobs(): Job[] {
+  try {
+    const s = localStorage.getItem('studio_jobs')
+    if (s) return JSON.parse(s) as Job[]
+  } catch (_) {}
+  return []
+}
 
-  const save = (c: StudioConfig) => {
+export function StudioProvider({ children }: { children: React.ReactNode }) {
+  const [config, setConfig] = useState<StudioConfig>(loadStoredConfig)
+  const [jobs, setJobs] = useState<Job[]>(loadStoredJobs)
+
+  const saveConfig = (c: StudioConfig) => {
     localStorage.setItem('studio_config', JSON.stringify(c))
   }
 
+  const saveJobs = (j: Job[]) => {
+    localStorage.setItem('studio_jobs', JSON.stringify(j))
+  }
+
   const updateConfig = useCallback((p: Partial<StudioConfig>) => {
-    setConfig(prev => { const n = { ...prev, ...p }; save(n); return n })
+    setConfig(prev => { const n = { ...prev, ...p }; saveConfig(n); return n })
   }, [])
 
   const updateSettings = useCallback((p: Partial<VideoSettings>) => {
     setConfig(prev => {
       const n = { ...prev, settings: { ...prev.settings, ...p } }
-      save(n)
+      saveConfig(n)
       return n
     })
   }, [])
@@ -87,8 +121,46 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('studio_config')
   }, [])
 
+  const addJob = useCallback((job: Job) => {
+    setJobs(prev => {
+      const n = [job, ...prev]
+      saveJobs(n)
+      return n
+    })
+  }, [])
+
+  const updateJob = useCallback((id: string, updates: Partial<Job>) => {
+    setJobs(prev => {
+      const n = prev.map(j => j.id === id ? { ...j, ...updates } : j)
+      saveJobs(n)
+      return n
+    })
+  }, [])
+
+  const deleteJob = useCallback((id: string) => {
+    setJobs(prev => {
+      const n = prev.filter(j => j.id !== id)
+      saveJobs(n)
+      return n
+    })
+  }, [])
+
+  const getJob = useCallback((id: string) => {
+    return jobs.find(j => j.id === id)
+  }, [jobs])
+
   return (
-    <StudioContext.Provider value={{ config, updateConfig, updateSettings, resetConfig }}>
+    <StudioContext.Provider value={{ 
+      config, 
+      jobs, 
+      updateConfig, 
+      updateSettings, 
+      resetConfig,
+      addJob,
+      updateJob,
+      deleteJob,
+      getJob
+    }}>
       {children}
     </StudioContext.Provider>
   )
