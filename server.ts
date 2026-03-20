@@ -54,7 +54,7 @@ app.get("/api/verse-preview", async (req, res) => {
       return {
         verse_key: v.verse_key,
         text: v.text_uthmani,
-        translation: v.translations[0]?.text.replace(/<(?:.|\n)*?>/gm, ''), // Remove HTML tags
+        translation: (v.translations && v.translations[0]?.text) ? v.translations[0].text.replace(/<(?:.|\n)*?>/gm, '') : '', // Remove HTML tags
         audioUrl: audio ? (audio.url.startsWith('http') ? audio.url : `https://download.quranicaudio.com/quran/${audio.url}`) : null
       };
     });

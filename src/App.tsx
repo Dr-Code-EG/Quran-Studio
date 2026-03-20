@@ -141,7 +141,21 @@ export default function App() {
       canvas.width = width;
       canvas.height = height;
 
-      // 3. Process each verse
+      // 3. Pre-fetch all audio files in parallel
+      setJobStatus(prev => prev ? { ...prev, stage: 'Downloading audio files...' } : null);
+      const audioDataMap: { [key: number]: Uint8Array } = {};
+      await Promise.all(verses.map(async (verse: any, i: number) => {
+        if (verse.audioUrl) {
+          try {
+            const data = await fetchFile(verse.audioUrl);
+            audioDataMap[i] = data;
+          } catch (e) {
+            console.warn(`Failed to fetch audio for verse ${i + 1}`, e);
+          }
+        }
+      }));
+
+      // 4. Process each verse
       const audioFiles: string[] = [];
       const frameFiles: string[] = [];
 
@@ -150,12 +164,12 @@ export default function App() {
         const progress = Math.round(((i + 1) / verses.length) * 60);
         setJobStatus(prev => prev ? { ...prev, progress, stage: `Processing verse ${i + 1}/${verses.length}` } : null);
 
-        // Fetch audio
-        const audioUrl = verse.audioUrl;
-        const audioData = await fetchFile(audioUrl);
-        const audioName = `audio_${i}.mp3`;
-        await ffmpeg.writeFile(audioName, audioData);
-        audioFiles.push(audioName);
+        // Write audio to FFmpeg
+        if (audioDataMap[i]) {
+          const audioName = `audio_${i}.mp3`;
+          await ffmpeg.writeFile(audioName, audioDataMap[i]);
+          audioFiles.push(audioName);
+        }
 
         // Render frame
         ctx.clearRect(0, 0, width, height);
@@ -179,7 +193,8 @@ export default function App() {
           ctx.font = `${config.fontSize * 0.6}px Arial`;
           const transY = height / 2 + 60;
           // Simple word wrap for translation
-          const words = verse.translation.split(' ');
+          const translationText = verse.translation || '';
+          const words = translationText.split(' ');
           let line = '';
           let y = transY;
           for (const word of words) {
@@ -222,13 +237,17 @@ export default function App() {
       // Concat frames with duration
       // Note: In a real app, we'd get the actual audio duration. 
       // For this prototype, we'll assume 5s per verse or try to match audio.
-      const frameList = frameFiles.map(f => `file '${f}'\nduration 5`).join('\n');
+      let frameList = frameFiles.map(f => `file '${f}'\nduration 5`).join('\n');
+      // Add the last frame again to ensure the last duration is respected
+      if (frameFiles.length > 0) {
+        frameList += `\nfile '${frameFiles[frameFiles.length - 1]}'`;
+      }
       await ffmpeg.writeFile('frame_list.txt', frameList);
       
       await ffmpeg.exec([
         '-f', 'concat', '-safe', '0', '-i', 'frame_list.txt',
         '-i', 'output_audio.mp3',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4'
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4'
       ]);
 
       const data = await ffmpeg.readFile('output.mp4');
