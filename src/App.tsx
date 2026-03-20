@@ -31,6 +31,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import reshaper from 'arabic-reshaper';
+import { reverse } from 'rtl-arabic';
 import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
 import { SURAHS, RECITERS } from './constants/quranData';
 
@@ -75,6 +77,7 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const [ffmpegLoading, setFfmpegLoading] = useState(false);
   const ffmpegRef = useRef(new FFmpeg());
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -83,12 +86,16 @@ export default function App() {
   }, []);
 
   const loadFFmpeg = async () => {
+    if (ffmpegLoading) return;
+    setFfmpegLoading(true);
     try {
       const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
       const ffmpeg = ffmpegRef.current;
+      
       ffmpeg.on('log', ({ message }) => {
-        console.log(message);
+        console.log('FFmpeg Log:', message);
       });
+
       await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
@@ -97,6 +104,8 @@ export default function App() {
     } catch (err) {
       console.error('Failed to load FFmpeg:', err);
       setError('Failed to load video processing engine. Please refresh.');
+    } finally {
+      setFfmpegLoading(false);
     }
   };
 
@@ -249,9 +258,23 @@ export default function App() {
         ctx.textBaseline = 'middle';
         
         // Arabic text
+        const reshaped = reshaper.reshape(verse.text);
+        const reversed = reverse(reshaped);
+        
         ctx.font = `bold ${config.fontSize * 1.2}px "Amiri", Arial`;
         const arabicY = height / 2 - 40;
-        ctx.fillText(verse.text, width / 2, arabicY);
+        
+        // Add text shadow for better readability
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 15;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 4;
+        
+        ctx.fillText(reversed, width / 2, arabicY);
+        
+        // Reset shadow for translation
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
         
         // Translation text
         if (config.showTranslation) {
@@ -403,7 +426,9 @@ export default function App() {
         });
         const data = Array.isArray(res.data) ? res.data[0] : res.data;
         if (data) {
-          setPreviewVerse(data);
+          const reshaped = reshaper.reshape(data.text);
+          const reversed = reverse(reshaped);
+          setPreviewVerse({ text: reversed, translation: data.translation });
         }
       } catch (error) {
         console.error("Failed to fetch preview verse", error);
@@ -483,14 +508,16 @@ export default function App() {
 
       {/* Sidebar - Configuration */}
       <div className="w-full lg:w-[450px] h-screen overflow-y-auto border-r border-white/5 bg-[#0a0a0a] p-6 custom-scrollbar">
-        <header className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-emerald-500/10 rounded-lg">
+        <header className="mb-10">
+          <div className="flex items-center gap-4 mb-3">
+            <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
               <Sparkles className="w-6 h-6 text-emerald-500" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">Quran Studio</h1>
+            <div>
+              <h1 className="text-3xl font-display font-bold tracking-tight text-white">Quran Studio</h1>
+              <p className="text-zinc-500 text-[10px] uppercase tracking-[0.2em] font-bold">Professional Video Editor</p>
+            </div>
           </div>
-          <p className="text-zinc-500 text-sm">Professional Quranic Video Creator</p>
         </header>
 
         <div className="space-y-8">
@@ -567,13 +594,13 @@ export default function App() {
           {/* Section: Multi-Background */}
           <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-zinc-400 text-xs font-bold uppercase tracking-widest">
+              <div className="flex items-center gap-2 text-zinc-400 text-[10px] font-bold uppercase tracking-[0.15em]">
                 <Layers className="w-3 h-3" />
                 <span>Background Segments</span>
               </div>
               <button 
                 onClick={addBackground}
-                className="flex items-center gap-1 px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-all border border-emerald-500/20"
               >
                 <Plus className="w-3 h-3" />
                 Add Segment
@@ -881,7 +908,7 @@ export default function App() {
       </div>
 
       {/* Main Preview Area */}
-      <main className="flex-1 h-screen flex flex-col items-center justify-center p-8 bg-[#050505] relative overflow-hidden">
+      <main className="flex-1 h-screen flex flex-col items-center justify-center p-8 lg:p-12 bg-[#050505] relative overflow-hidden">
         {/* Background Decorative Elements */}
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-20">
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/20 blur-[120px] rounded-full" />
@@ -891,12 +918,12 @@ export default function App() {
         <div className="w-full max-w-4xl flex flex-col items-center gap-8 relative z-10">
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-4">
-              <div className="p-2 glass rounded-lg">
-                <Eye className="w-5 h-5 text-zinc-400" />
+              <div className="p-2.5 bg-zinc-900/50 backdrop-blur-xl border border-white/10 rounded-xl">
+                <Eye className="w-5 h-5 text-emerald-500" />
               </div>
               <div>
-                <h2 className="text-lg font-bold">Studio Preview</h2>
-                <p className="text-xs text-zinc-500">Real-time visualization of your configuration</p>
+                <h2 className="text-xl font-display font-bold text-white">Studio Preview</h2>
+                <p className="text-xs text-zinc-500 font-medium">Real-time visualization of your configuration</p>
               </div>
             </div>
             
@@ -905,7 +932,7 @@ export default function App() {
                 <a 
                   href={jobStatus.videoUrl} 
                   download 
-                  className="flex items-center gap-2 px-4 py-2 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all"
+                  className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition-all shadow-xl shadow-white/5"
                 >
                   <Download className="w-4 h-4" />
                   Download Video
@@ -916,9 +943,9 @@ export default function App() {
 
           {/* Video Mock Preview */}
           <div className={cn(
-            "glass rounded-3xl overflow-hidden shadow-2xl relative group",
-            ASPECT_RATIOS.find(r => r.id === config.aspectRatio)?.ratio,
-            config.aspectRatio === '9:16' ? 'h-[70vh]' : 'w-full'
+            "relative rounded-[2.5rem] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)] border border-white/5 transition-all duration-700",
+            config.aspectRatio === '9:16' ? 'h-[75vh] aspect-[9/16]' : 
+            config.aspectRatio === '1:1' ? 'w-[60vh] aspect-square' : 'w-full aspect-[16/9]'
           )}>
             {/* Background */}
             <div className="absolute inset-0 bg-zinc-900 overflow-hidden">
@@ -970,8 +997,10 @@ export default function App() {
                   style={{ 
                     fontSize: `${config.fontSize}px`, 
                     color: config.fontColor,
-                    fontFamily: config.fontFamily === 'Custom' ? 'sans-serif' : config.fontFamily
+                    fontFamily: config.fontFamily === 'Custom' ? 'sans-serif' : config.fontFamily,
+                    textShadow: '0 4px 20px rgba(0,0,0,0.5)'
                   }}
+                  dir="rtl"
                 >
                   {previewVerse.text}
                 </h3>

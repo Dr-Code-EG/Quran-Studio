@@ -19,6 +19,7 @@
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "arabic-reshaper": "^1.1.0",
     "axios": "^1.13.6",
     "better-sqlite3": "^12.4.1",
     "canvas": "^3.2.1",
@@ -34,6 +35,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "rtl-arabic": "^2.1.1",
     "tailwind-merge": "^3.5.0",
     "uuid": "^13.0.0",
     "vite": "^6.2.0"
