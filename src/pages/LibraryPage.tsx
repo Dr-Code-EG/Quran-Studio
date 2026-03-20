@@ -52,7 +52,7 @@ export default function LibraryPage() {
           <p className="text-xs text-text-muted mt-0.5">Your generated videos</p>
         </div>
         <button
-          onClick={refetch}
+          onClick={() => refetch()}
           className="text-xs text-gold border border-gold/30 rounded-lg px-3 py-1.5 hover:bg-gold/10 transition-colors"
         >
           Refresh
