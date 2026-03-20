@@ -31,8 +31,28 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import reshaper from 'arabic-reshaper';
-import { reverse } from 'rtl-arabic';
+import * as reshaperModule from 'arabic-reshaper';
+
+const reshapeText = (text: string) => {
+  try {
+    const reshaper = (reshaperModule as any).default || reshaperModule;
+    if (reshaper && typeof reshaper.convertArabic === 'function') {
+      return reshaper.convertArabic(text);
+    }
+    const reshapeFn = reshaper.reshape || (typeof reshaper === 'function' ? reshaper : null);
+    if (typeof reshapeFn === 'function') {
+      return reshapeFn(text);
+    }
+    return text;
+  } catch (e) {
+    console.error('Error reshaping text', e);
+    return text;
+  }
+};
+
+const reverseText = (text: string) => {
+  return text.split('').reverse().join('');
+};
 import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
 import { SURAHS, RECITERS } from './constants/quranData';
 
@@ -258,8 +278,8 @@ export default function App() {
         ctx.textBaseline = 'middle';
         
         // Arabic text
-        const reshaped = reshaper.reshape(verse.text);
-        const reversed = reverse(reshaped);
+        const reshaped = reshapeText(verse.text);
+        const reversed = reverseText(reshaped);
         
         ctx.font = `bold ${config.fontSize * 1.2}px "Amiri", Arial`;
         const arabicY = height / 2 - 40;
@@ -425,13 +445,16 @@ export default function App() {
           }
         });
         const data = Array.isArray(res.data) ? res.data[0] : res.data;
-        if (data) {
-          const reshaped = reshaper.reshape(data.text);
-          const reversed = reverse(reshaped);
+        if (data && data.text) {
+          const reshaped = reshapeText(data.text);
+          const reversed = reverseText(reshaped);
           setPreviewVerse({ text: reversed, translation: data.translation });
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error("Failed to fetch preview verse", error);
+        if (error.response) {
+          console.error("Error response data:", error.response.data);
+        }
       }
     }, 500);
     return () => clearTimeout(timer);

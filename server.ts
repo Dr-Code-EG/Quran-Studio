@@ -47,6 +47,7 @@ app.get("/api/verse-preview", async (req, res) => {
 
     // 1. Fetch verses with translations
     const verseUrl = `https://api.quran.com/api/v4/verses/by_chapter/${sId}`;
+    console.log(`[API] Fetching from: ${verseUrl}`);
     const versePromises = [];
     for (let p = startPage; p <= endPage; p++) {
       versePromises.push(axios.get(verseUrl, {
@@ -58,6 +59,9 @@ app.get("/api/verse-preview", async (req, res) => {
           page: p,
           per_page: perPage
         }
+      }).catch(err => {
+        console.error(`[API] Verse fetch error for page ${p}:`, err.message);
+        throw err;
       }));
     }
 
@@ -120,7 +124,10 @@ app.get("/api/verse-preview", async (req, res) => {
     res.json(result);
   } catch (error: any) {
     console.error("[API] Error fetching verses:", error.message);
-    res.status(500).json({ error: "Failed to fetch verses: " + error.message });
+    if (error.response) {
+      console.error("[API] Error response data:", error.response.data);
+    }
+    res.status(500).json({ error: "Failed to fetch verses: " + (error.response?.data?.error || error.message) });
   }
 });
 
