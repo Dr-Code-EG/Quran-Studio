@@ -29,6 +29,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { Surah, Reciter, VideoConfig, JobStatus, BackgroundConfig } from './types';
 import { SURAHS, RECITERS } from './constants/quranData';
 
@@ -72,7 +74,183 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+  const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const ffmpegRef = useRef(new FFmpeg());
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    loadFFmpeg();
+  }, []);
+
+  const loadFFmpeg = async () => {
+    try {
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+      const ffmpeg = ffmpegRef.current;
+      ffmpeg.on('log', ({ message }) => {
+        console.log(message);
+      });
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+      setFfmpegLoaded(true);
+    } catch (err) {
+      console.error('Failed to load FFmpeg:', err);
+      setError('Failed to load video processing engine. Please refresh.');
+    }
+  };
+
+  const generateVideo = async () => {
+    if (!ffmpegLoaded) {
+      setError('Video engine is still loading. Please wait a moment.');
+      return;
+    }
+
+    setGenerating(true);
+    setError(null);
+    setJobStatus({
+      id: 'client-side',
+      status: 'processing',
+      progress: 0,
+      stage: 'Initializing...',
+    });
+
+    try {
+      const ffmpeg = ffmpegRef.current;
+      
+      // 1. Fetch verse data
+      setJobStatus(prev => prev ? { ...prev, stage: 'Fetching verses...' } : null);
+      const versesResponse = await axios.get(`/api/verse-preview`, {
+        params: {
+          surahId: config.surahId,
+          verseFrom: config.verseFrom,
+          verseTo: config.verseTo,
+          reciterId: config.reciterId,
+        }
+      });
+      const verses = Array.isArray(versesResponse.data) ? versesResponse.data : [versesResponse.data];
+
+      // 2. Prepare Canvas
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('Canvas not found');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas context not found');
+
+      const [width, height] = config.aspectRatio === '9:16' ? [1080, 1920] : 
+                            config.aspectRatio === '1:1' ? [1080, 1080] : [1920, 1080];
+      canvas.width = width;
+      canvas.height = height;
+
+      // 3. Process each verse
+      const audioFiles: string[] = [];
+      const frameFiles: string[] = [];
+
+      for (let i = 0; i < verses.length; i++) {
+        const verse = verses[i];
+        const progress = Math.round(((i + 1) / verses.length) * 60);
+        setJobStatus(prev => prev ? { ...prev, progress, stage: `Processing verse ${i + 1}/${verses.length}` } : null);
+
+        // Fetch audio
+        const audioUrl = verse.audioUrl;
+        const audioData = await fetchFile(audioUrl);
+        const audioName = `audio_${i}.mp3`;
+        await ffmpeg.writeFile(audioName, audioData);
+        audioFiles.push(audioName);
+
+        // Render frame
+        ctx.clearRect(0, 0, width, height);
+        
+        // Background
+        ctx.fillStyle = '#1a1a1a'; // Default dark background
+        ctx.fillRect(0, 0, width, height);
+
+        // Text rendering
+        ctx.fillStyle = config.fontColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Arabic text
+        ctx.font = `bold ${config.fontSize * 1.2}px "Amiri", Arial`;
+        const arabicY = height / 2 - 40;
+        ctx.fillText(verse.text, width / 2, arabicY);
+        
+        // Translation text
+        if (config.showTranslation) {
+          ctx.font = `${config.fontSize * 0.6}px Arial`;
+          const transY = height / 2 + 60;
+          // Simple word wrap for translation
+          const words = verse.translation.split(' ');
+          let line = '';
+          let y = transY;
+          for (const word of words) {
+            const testLine = line + word + ' ';
+            const metrics = ctx.measureText(testLine);
+            if (metrics.width > width * 0.8) {
+              ctx.fillText(line, width / 2, y);
+              line = word + ' ';
+              y += config.fontSize * 0.8;
+            } else {
+              line = testLine;
+            }
+          }
+          ctx.fillText(line, width / 2, y);
+        }
+
+        // Social Branding
+        if (config.socialHandle) {
+          ctx.font = '24px Arial';
+          ctx.globalAlpha = 0.6;
+          ctx.fillText(config.socialHandle, width / 2, height - 100);
+          ctx.globalAlpha = 1.0;
+        }
+
+        // Save frame
+        const frameName = `frame_${i}.png`;
+        const frameData = await fetchFile(canvas.toDataURL('image/png'));
+        await ffmpeg.writeFile(frameName, frameData);
+        frameFiles.push(frameName);
+      }
+
+      // 4. Combine into video
+      setJobStatus(prev => prev ? { ...prev, progress: 80, stage: 'Generating final video...' } : null);
+      
+      // Concat audio
+      const audioList = audioFiles.map(f => `file '${f}'`).join('\n');
+      await ffmpeg.writeFile('audio_list.txt', audioList);
+      await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'audio_list.txt', '-c', 'copy', 'output_audio.mp3']);
+
+      // Concat frames with duration
+      // Note: In a real app, we'd get the actual audio duration. 
+      // For this prototype, we'll assume 5s per verse or try to match audio.
+      const frameList = frameFiles.map(f => `file '${f}'\nduration 5`).join('\n');
+      await ffmpeg.writeFile('frame_list.txt', frameList);
+      
+      await ffmpeg.exec([
+        '-f', 'concat', '-safe', '0', '-i', 'frame_list.txt',
+        '-i', 'output_audio.mp3',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4'
+      ]);
+
+      const data = await ffmpeg.readFile('output.mp4');
+      const videoUrl = URL.createObjectURL(new Blob([(data as Uint8Array).buffer], { type: 'video/mp4' }));
+
+      setJobStatus({
+        id: 'client-side',
+        status: 'completed',
+        progress: 100,
+        stage: 'Generation complete!',
+        videoUrl,
+      });
+
+    } catch (err: any) {
+      console.error('Video generation failed:', err);
+      setError(err.message || 'Failed to generate video. Please try again.');
+      setJobStatus(prev => prev ? { ...prev, status: 'failed' } : null);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const [config, setConfig] = useState<VideoConfig>({
     surahId: 1,
     verseFrom: 1,
@@ -96,6 +274,7 @@ export default function App() {
     overlayType: 'none',
     overlayOpacity: 0.5,
     transitionType: 'fade',
+    motionEffect: true,
     backgrounds: [],
   });
 
@@ -107,8 +286,17 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
-        const res = await axios.get(`/api/verse-preview?surahId=${config.surahId}&verseFrom=${config.verseFrom}`);
-        setPreviewVerse(res.data);
+        const res = await axios.get(`/api/verse-preview`, {
+          params: {
+            surahId: config.surahId,
+            verseFrom: config.verseFrom,
+            verseTo: config.verseFrom // Only fetch the current verse for preview
+          }
+        });
+        const data = Array.isArray(res.data) ? res.data[0] : res.data;
+        if (data) {
+          setPreviewVerse(data);
+        }
       } catch (error) {
         console.error("Failed to fetch preview verse", error);
       }
@@ -117,42 +305,7 @@ export default function App() {
   }, [config.surahId, config.verseFrom]);
 
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    let isMounted = true;
-
-    const pollStatus = async () => {
-      if (!jobStatus || jobStatus.status !== 'processing' || !isMounted) return;
-
-      try {
-        const res = await axios.get(`/api/job-status/${jobStatus.id}`);
-        if (!isMounted) return;
-
-        setJobStatus(res.data);
-        
-        if (res.data.status === 'completed' || res.data.status === 'failed') {
-          setGenerating(false);
-        } else {
-          // Schedule next poll only if still processing
-          timeoutId = setTimeout(pollStatus, 5000);
-        }
-      } catch (error: any) {
-        if (!isMounted) return;
-        console.error("Failed to check job status", error);
-        
-        // If we hit rate limiting, wait longer before next poll
-        const delay = error.response?.status === 429 ? 10000 : 5000;
-        timeoutId = setTimeout(pollStatus, delay);
-      }
-    };
-
-    if (jobStatus && jobStatus.status === 'processing') {
-      timeoutId = setTimeout(pollStatus, 5000);
-    }
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timeoutId);
-    };
+    // Client-side generation doesn't need polling
   }, [jobStatus?.id, jobStatus?.status]);
 
   const addBackground = () => {
@@ -198,30 +351,7 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    setGenerating(true);
-    setJobStatus(null);
-    setError(null);
-    
-    const formData = new FormData();
-    formData.append('config', JSON.stringify(config));
-    
-    // Append backgrounds in order
-    config.backgrounds.forEach((bg, index) => {
-      if (bgFiles[bg.id]) {
-        formData.append('backgrounds', bgFiles[bg.id]);
-      }
-    });
-
-    if (customFontFile) formData.append('customFont', customFontFile);
-
-    try {
-      const res = await axios.post('/api/generate', formData);
-      setJobStatus({ id: res.data.jobId, status: 'processing', progress: 0, stage: 'Initializing' });
-    } catch (err: any) {
-      console.error("Generation failed", err);
-      setError(err.response?.data?.error || "Failed to start video generation. Please check your server logs.");
-      setGenerating(false);
-    }
+    generateVideo();
   };
 
   if (loading) {
@@ -240,6 +370,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
+      {/* Hidden Canvas for Video Generation */}
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
+
       {/* Sidebar - Configuration */}
       <div className="w-full lg:w-[450px] h-screen overflow-y-auto border-r border-white/5 bg-[#0a0a0a] p-6 custom-scrollbar">
         <header className="mb-8">
@@ -660,12 +793,6 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3">
-              <button 
-                onClick={() => window.open('/api/test-canvas', '_blank')}
-                className="flex items-center gap-2 px-3 py-2 bg-zinc-800 text-white rounded-xl font-bold text-xs hover:bg-zinc-700 transition-all"
-              >
-                Test Canvas
-              </button>
               {jobStatus?.videoUrl && (
                 <a 
                   href={jobStatus.videoUrl} 
